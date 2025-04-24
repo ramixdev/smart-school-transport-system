@@ -42,8 +42,21 @@
         }
       ],
       "@react-native-firebase/app",
-      "@react-native-firebase/auth"
+      [
+        "@react-native-firebase/auth",
+        {
+          "androidPackageName": "com.smartschooltransport.app"
+        }
+      ]
     ],
+    "extra": {
+      "firebaseApiKey": "AIzaSyArd8OLVm04f31HtshAIJevnq-KG5AszD0",
+      "firebaseAuthDomain": "schooltransport-6f1f1.firebaseapp.com",
+      "firebaseProjectId": "schooltransport-6f1f1",
+      "firebaseStorageBucket": "schooltransport-6f1f1.firebasestorage.app",
+      "firebaseMessagingSenderId": "641988574090",
+      "firebaseAppId": "1:641988574090:android:b7fdbb11e9dfa43118a673"
+    },
     "experiments": {
       "typedRoutes": true
     }
