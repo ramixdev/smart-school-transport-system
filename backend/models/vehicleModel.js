@@ -94,6 +94,34 @@ const updateVehicleStatus = async (vehicleId, status) => {
   }
 };
 
+// Get all vehicles
+const getAllVehicles = async () => {
+  try {
+    const snapshot = await vehiclesCollection.get();
+    const vehicles = [];
+    snapshot.forEach(doc => {
+      vehicles.push({ id: doc.id, ...doc.data() });
+    });
+    return vehicles;
+  } catch (error) {
+    throw new Error(`Error getting all vehicles: ${error.message}`);
+  }
+};
+
+// Get vehicles by status
+const getVehiclesByStatus = async (status) => {
+  try {
+    const snapshot = await vehiclesCollection.where('status', '==', status).get();
+    const vehicles = [];
+    snapshot.forEach(doc => {
+      vehicles.push({ id: doc.id, ...doc.data() });
+    });
+    return vehicles;
+  } catch (error) {
+    throw new Error(`Error getting vehicles by status: ${error.message}`);
+  }
+};
+
 module.exports = {
   createVehicle,
   getVehicleById,
@@ -101,5 +129,7 @@ module.exports = {
   deleteVehicle,
   getVehiclesBySchoolId,
   addMaintenanceRecord,
-  updateVehicleStatus
+  updateVehicleStatus,
+  getAllVehicles,
+  getVehiclesByStatus
 }; 
