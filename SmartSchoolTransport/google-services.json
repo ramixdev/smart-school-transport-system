@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "641988574090",
+    "project_id": "schooltransport-6f1f1",
+    "storage_bucket": "schooltransport-6f1f1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:641988574090:android:b7fdbb11e9dfa43118a673",
+        "android_client_info": {
+          "package_name": "com.smartschooltransport.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyArd8OLVm04f31HtshAIJevnq-KG5AszD0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
