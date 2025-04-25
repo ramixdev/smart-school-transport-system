@@ -1,13 +1,16 @@
-import React from 'react';
-import { View, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity, Image, Alert } from 'react-native';
 import { Text, Avatar } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
+import StarRating from '../../components/StarRating';
 
 export default function DriverDetailsScreen() {
   const { childId } = useLocalSearchParams();
+  const [rating, setRating] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
   
-  // Mock data - In real app, fetch driver details based on childId
+  // Mock data - In real app, fetch driver details and rating from your backend
   const driverDetails = {
     name: 'Malsri De Silva',
     profileImage: null,
@@ -20,6 +23,25 @@ export default function DriverDetailsScreen() {
       '/path/to/image2',
       '/path/to/image3'
     ]
+  };
+
+  useEffect(() => {
+    // In real app, fetch the parent's rating for this driver
+    // and the driver's average rating from your backend
+    setRating(4.5); // Mock data
+    setIsLoading(false);
+  }, []);
+
+  const handleRatingChange = async (newRating: number) => {
+    try {
+      setRating(newRating);
+      // In real app, send the rating to your backend
+      // await api.updateDriverRating(driverId, newRating);
+      Alert.alert('Success', 'Rating updated successfully');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update rating. Please try again.');
+      setRating(rating); // Revert to previous rating on error
+    }
   };
 
   const handleBack = () => {
@@ -53,6 +75,17 @@ export default function DriverDetailsScreen() {
             />
           )}
           <Text style={styles.driverName}>{driverDetails.name}</Text>
+          
+          {/* Rating Section */}
+          {!isLoading && (
+            <View style={styles.ratingContainer}>
+              <StarRating
+                rating={rating}
+                size={30}
+                onRatingChange={handleRatingChange}
+              />
+            </View>
+          )}
         </View>
 
         {/* Contact Info Card */}
@@ -184,5 +217,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#ddd',
+  },
+  ratingContainer: {
+    marginTop: 16,
+    alignItems: 'center',
   },
 }); 
