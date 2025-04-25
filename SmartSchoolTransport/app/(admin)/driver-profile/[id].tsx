@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Image, Alert, Pressable } from 'react-native';
 import { Text, Avatar, Button, Menu, Divider } from 'react-native-paper';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
+import StarRating from '../../../components/StarRating';
+
+type RouteParams = {
+  id: string;
+}
 
 // Mock data - replace with actual data from your database
 const mockDriver = {
@@ -14,6 +19,8 @@ const mockDriver = {
   address: 'PWX5+V6J, Unnamed Road, Panadura',
   nic: '743924789V',
   dateOfBirth: '10/01/2018',
+  rating: 4.5,
+  totalRatings: 128,
   vehicle: {
     number: 'NB 7581',
     startLocation: 'PWX5+V6J, Unnamed Road, Panadura',
@@ -23,7 +30,8 @@ const mockDriver = {
 };
 
 export default function DriverProfileScreen() {
-  const { id } = useLocalSearchParams();
+  const params = useLocalSearchParams<RouteParams>();
+  const id = params.id;
   const [menuVisible, setMenuVisible] = useState(false);
 
   const handleBack = () => {
@@ -32,7 +40,7 @@ export default function DriverProfileScreen() {
 
   const handleSchoolsPress = () => {
     router.push({
-      pathname: "/(admin)/driver-schools/[id]",
+      pathname: "/(admin)/driver-schools/[id]" as const,
       params: { id }
     });
   };
@@ -116,6 +124,18 @@ export default function DriverProfileScreen() {
             color="#fff"
           />
           <Text style={styles.name}>{mockDriver.name}</Text>
+          
+          {/* Rating Section */}
+          <View style={styles.ratingContainer}>
+            <StarRating
+              rating={mockDriver.rating}
+              size={24}
+              disabled={true}
+            />
+            <Text style={styles.ratingText}>
+              {mockDriver.rating.toFixed(1)} ({mockDriver.totalRatings} ratings)
+            </Text>
+          </View>
         </View>
 
         {/* Driver Details */}
@@ -268,5 +288,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#e0e0e0',
+  },
+  ratingContainer: {
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  ratingText: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
   },
 }); 
