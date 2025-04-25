@@ -4,8 +4,10 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Image,
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { FontAwesome } from '@expo/vector-icons';
+import StarRating from '../../components/StarRating';
+import { getDriverRating } from '../../api/feedback';
 
-// Mock data for driver list with school information
+// Initial driver data without ratings
 const DRIVERS = [
   { 
     id: 1, 
@@ -44,7 +46,39 @@ export default function ParentSelectDriverScreen() {
   const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
   const [filteredDrivers, setFilteredDrivers] = useState(DRIVERS);
   const [isSearching, setIsSearching] = useState(false);
+  const [driverRatings, setDriverRatings] = useState<{ [key: number]: { averageRating: number, totalRatings: number } }>({});
+  const [isLoadingRatings, setIsLoadingRatings] = useState(true);
   
+  useEffect(() => {
+    // Fetch ratings for all drivers
+    const fetchDriverRatings = async () => {
+      try {
+        const ratings: { [key: number]: { averageRating: number, totalRatings: number } } = {};
+        
+        // Fetch ratings for each driver
+        await Promise.all(
+          DRIVERS.map(async (driver) => {
+            const ratingData = await getDriverRating(driver.id.toString());
+            if (ratingData) {
+              ratings[driver.id] = {
+                averageRating: ratingData.averageRating,
+                totalRatings: ratingData.totalRatings
+              };
+            }
+          })
+        );
+        
+        setDriverRatings(ratings);
+        setIsLoadingRatings(false);
+      } catch (error) {
+        console.error('Error fetching driver ratings:', error);
+        setIsLoadingRatings(false);
+      }
+    };
+
+    fetchDriverRatings();
+  }, []);
+
   useEffect(() => {
     // Filter drivers based on search query
     if (searchQuery.trim() === '') {
@@ -88,6 +122,56 @@ export default function ParentSelectDriverScreen() {
   
   const handleBack = () => {
     router.back();
+  };
+
+  const renderDriverItem = (driver: typeof DRIVERS[0]) => {
+    const driverRating = driverRatings[driver.id];
+    
+    return (
+      <TouchableOpacity 
+        key={driver.id}
+        style={[
+          styles.driverItem,
+          selectedDriver === driver.id && styles.selectedDriverItem
+        ]}
+        onPress={() => setSelectedDriver(driver.id)}
+      >
+        <View style={styles.driverAvatar}>
+          <FontAwesome name="user-circle" size={32} color="#5B9BD5" />
+        </View>
+        <View style={styles.driverInfo}>
+          <View style={styles.driverHeader}>
+            <Text style={styles.driverName}>{driver.name}</Text>
+            {!isLoadingRatings && driverRating && (
+              <View style={styles.ratingContainer}>
+                <StarRating 
+                  rating={driverRating.averageRating} 
+                  size={16} 
+                  disabled={true} 
+                />
+                <Text style={styles.ratingText}>
+                  ({driverRating.totalRatings})
+                </Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.driverPhone}>{driver.phone}</Text>
+          <View style={styles.schoolsList}>
+            {driver.schools.map((school, index) => (
+              <View key={index} style={styles.schoolTag}>
+                <FontAwesome name="graduation-cap" size={12} color="#5B9BD5" />
+                <Text style={styles.schoolText} numberOfLines={1} ellipsizeMode="tail">
+                  {school.split(',')[0]}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+        {selectedDriver === driver.id && (
+          <FontAwesome name="check-circle" size={24} color="#5B9BD5" style={styles.selectedIcon} />
+        )}
+      </TouchableOpacity>
+    );
   };
 
   return (
@@ -137,37 +221,7 @@ export default function ParentSelectDriverScreen() {
               </View>
             ) : (
               <View style={styles.driverList}>
-                {filteredDrivers.map(driver => (
-                  <TouchableOpacity 
-                    key={driver.id}
-                    style={[
-                      styles.driverItem,
-                      selectedDriver === driver.id && styles.selectedDriverItem
-                    ]}
-                    onPress={() => setSelectedDriver(driver.id)}
-                  >
-                    <View style={styles.driverAvatar}>
-                      <FontAwesome name="user-circle" size={32} color="#5B9BD5" />
-                    </View>
-                    <View style={styles.driverInfo}>
-                      <Text style={styles.driverName}>{driver.name}</Text>
-                      <Text style={styles.driverPhone}>{driver.phone}</Text>
-                      <View style={styles.schoolsList}>
-                        {driver.schools.map((school, index) => (
-                          <View key={index} style={styles.schoolTag}>
-                            <FontAwesome name="graduation-cap" size={12} color="#5B9BD5" />
-                            <Text style={styles.schoolText} numberOfLines={1} ellipsizeMode="tail">
-                              {school.split(',')[0]}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
-                    </View>
-                    {selectedDriver === driver.id && (
-                      <FontAwesome name="check-circle" size={24} color="#5B9BD5" style={styles.selectedIcon} />
-                    )}
-                  </TouchableOpacity>
-                ))}
+                {filteredDrivers.map(renderDriverItem)}
               </View>
             )}
           </View>
@@ -275,6 +329,12 @@ const styles = StyleSheet.create({
   driverInfo: {
     flex: 1,
   },
+  driverHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
   driverName: {
     fontSize: 16,
     fontWeight: 'bold',
@@ -349,5 +409,14 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontSize: 14,
     color: '#999',
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ratingText: {
+    fontSize: 12,
+    color: '#666',
+    marginLeft: 4,
   },
 });
