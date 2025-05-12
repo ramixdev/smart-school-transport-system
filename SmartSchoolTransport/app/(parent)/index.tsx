@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, FlatList, Image, StatusBar, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, FlatList, Image, StatusBar, Alert, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { Menu, Portal, Dialog, Button } from 'react-native-paper';
+import { getParentProfile, deleteChild } from '@/services/api';
 
 // Define valid route paths
 type ParentRoutes = {
@@ -15,47 +16,41 @@ type ParentRoutes = {
 };
 
 interface Child {
-    id: string;
-    name: string;
-    school: string;
-    address: string;
-    grade: string;
-    avatar: string | null;
-  }
-
-// Mock data for children - this would come from your backend in the real app
-const CHILDREN = [
-  {
-    id: '1',
-    name: 'Ametha Isiwara',
-    school: 'St. Peter\'s College',
-    address: 'Galle Road, Colombo, Sri Lanka',
-    grade: 'Grade 3',
-    avatar: null, // placeholder for profile image
-  },
-  {
-    id: '2',
-    name: 'Thejana Silva',
-    school: 'Ananda College',
-    address: 'Maradana Road, Colombo, Sri Lanka',
-    grade: 'Grade 11',
-    avatar: null,
-  },
-  {
-    id: '3',
-    name: 'Govin Wickramasooriya',
-    school: 'Royal College',
-    address: 'Rajakeeya Mawatha, Colombo, Sri Lanka',
-    grade: 'Grade 9',
-    avatar: null,
-  },
-];
+  id: string;
+  name: string;
+  school: string;
+  address: string;
+  grade: string;
+  avatar: string | null;
+  driverId: string | null;
+}
 
 const ParentHomePage = () => {
   const router = useRouter();
   const [optionsMenuVisible, setOptionsMenuVisible] = useState(false);
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [children, setChildren] = useState<Child[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [parentName, setParentName] = useState('');
+
+  useEffect(() => {
+    fetchParentData();
+  }, []);
+
+  const fetchParentData = async () => {
+    try {
+      setIsLoading(true);
+      const data = await getParentProfile();
+      setChildren(data.children);
+      setParentName(data.parent.name);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to fetch parent data');
+      console.error(error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleAddChild = () => {
     router.push('/(auth)/parent-add-child');
@@ -68,8 +63,14 @@ const ParentHomePage = () => {
     });
   };
 
-  const handleMarkAbsent = (childId: string) => {
-    console.log(`Marked child ${childId} as absent`);
+  const handleMarkAbsent = async (childId: string) => {
+    try {
+      await markChildAbsent(childId);
+      Alert.alert('Success', 'Child marked as absent');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to mark child as absent');
+      console.error(error);
+    }
   };
 
   const handleNotifications = () => {
@@ -110,10 +111,19 @@ const ParentHomePage = () => {
     setDeleteDialogVisible(true);
   };
 
-  const confirmDeleteChild = () => {
-    setDeleteDialogVisible(false);
-    // In a real app, this would delete from the database
-    Alert.alert('Success', 'Child has been removed successfully');
+  const confirmDeleteChild = async () => {
+    if (!selectedChildId) return;
+
+    try {
+      await deleteChild(selectedChildId);
+      setDeleteDialogVisible(false);
+      // Refresh children list
+      fetchParentData();
+      Alert.alert('Success', 'Child has been removed successfully');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to remove child');
+      console.error(error);
+    }
   };
 
   const renderChildItem = ({ item }: { item: Child }) => (
@@ -148,7 +158,9 @@ const ParentHomePage = () => {
           }
         >
           <Menu.Item onPress={handleEditChild} title="Update Details" leadingIcon="pencil" />
-          <Menu.Item onPress={handleDriverDetails} title="Driver Details" leadingIcon="account-tie" />
+          {item.driverId && (
+            <Menu.Item onPress={handleDriverDetails} title="Driver Details" leadingIcon="account-tie" />
+          )}
           <Menu.Item onPress={handleDeleteChild} title="Delete" leadingIcon="delete" />
         </Menu>
       </View>
@@ -169,11 +181,19 @@ const ParentHomePage = () => {
     </View>
   );
 
+  if (isLoading) {
+    return (
+      <ThemedView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#50B6C2" />
+      </ThemedView>
+    );
+  }
+
   return (
     <ThemedView style={styles.container}>
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
-        <ThemedText style={styles.headerTitle}>Dumidu Ranjith</ThemedText>
+        <ThemedText style={styles.headerTitle}>{parentName}</ThemedText>
         <View style={styles.headerButtons}>
           <TouchableOpacity 
             style={styles.iconButton}
@@ -190,7 +210,7 @@ const ParentHomePage = () => {
         </View>
       </View>
       <FlatList
-        data={CHILDREN}
+        data={children}
         renderItem={renderChildItem}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContainer}
@@ -222,6 +242,11 @@ const ParentHomePage = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   header: {
     backgroundColor: '#50B6C2',
