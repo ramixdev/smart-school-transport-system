@@ -10,7 +10,9 @@ const {
   deleteChildProfile, 
   markChildAbsent, 
   requestDriverEnrollment, 
-  getEnrollmentRequests 
+  getEnrollmentRequests, 
+  rateDriver, 
+  getDriverRatingDetails 
 } = require('../controllers/parentController');
 const { verifyFirebaseToken, isParent } = require('../middleware/authMiddleware');
 const { validateChildData, validateEnrollmentRequest } = require('../middleware/validationMiddleware');
@@ -31,5 +33,9 @@ router.post('/child/:childId/attendance', markChildAbsent);
 // Driver enrollment
 router.post('/enrollment', validateEnrollmentRequest, requestDriverEnrollment);
 router.get('/enrollments', getEnrollmentRequests);
+
+// Rating routes
+router.post('/rate-driver', rateDriver);
+router.get('/driver/:driverId/rating', getDriverRatingDetails);
 
 module.exports = router; 
