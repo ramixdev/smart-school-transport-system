@@ -5,7 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { FontAwesome } from '@expo/vector-icons';
 import StarRating from '../../components/StarRating';
-import { getDriverRating } from '../../api/feedback';
+import { getDriverRating } from '../../services/api';
 
 // Initial driver data without ratings
 const DRIVERS = [
