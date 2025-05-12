@@ -59,11 +59,17 @@ const generateRoute = async (driverId, children, type) => {
 
     let stops = [];
     if (type === 'morning') {
-      // Morning: Home -> Children's homes -> Schools
+      // Morning: Home -> Children's homes (parent location) -> Schools
       const schools = new Map();
-      
-      // Group children by school
+      // Group children by school and fetch parent locations
+      const parentLocations = {};
       for (const child of children) {
+        // Fetch parent location
+        if (!parentLocations[child.parentId]) {
+          const parentDoc = await db.collection('users').doc(child.parentId).get();
+          parentLocations[child.parentId] = parentDoc.data().location;
+        }
+        // Fetch school location
         if (!schools.has(child.school)) {
           const schoolDoc = await db.collection('schools').doc(child.school).get();
           schools.set(child.school, {
@@ -73,15 +79,13 @@ const generateRoute = async (driverId, children, type) => {
         }
         schools.get(child.school).children.push(child);
       }
-
-      // Add children's pickup locations
+      // Add children's pickup locations (parent location)
       stops = children.map(child => ({
         type: 'pickup',
         childId: child.id,
-        location: child.pickupLocation,
+        location: parentLocations[child.parentId],
         name: child.name
       }));
-
       // Add school dropoff locations
       for (const [schoolId, school] of schools) {
         stops.push({
@@ -91,12 +95,17 @@ const generateRoute = async (driverId, children, type) => {
           children: school.children.map(c => c.id)
         });
       }
-    } else {
-      // Evening: Schools -> Children's homes
+    } else if (type === 'evening') {
+      // Evening: Schools -> Children's homes (parent location)
       const schools = new Map();
-      
-      // Group children by school
+      const parentLocations = {};
       for (const child of children) {
+        // Fetch parent location
+        if (!parentLocations[child.parentId]) {
+          const parentDoc = await db.collection('users').doc(child.parentId).get();
+          parentLocations[child.parentId] = parentDoc.data().location;
+        }
+        // Fetch school location
         if (!schools.has(child.school)) {
           const schoolDoc = await db.collection('schools').doc(child.school).get();
           schools.set(child.school, {
@@ -106,7 +115,6 @@ const generateRoute = async (driverId, children, type) => {
         }
         schools.get(child.school).children.push(child);
       }
-
       // Add school pickup locations
       for (const [schoolId, school] of schools) {
         stops.push({
@@ -116,19 +124,16 @@ const generateRoute = async (driverId, children, type) => {
           children: school.children.map(c => c.id)
         });
       }
-
-      // Add children's dropoff locations
+      // Add children's dropoff locations (parent location)
       stops = stops.concat(children.map(child => ({
         type: 'dropoff',
         childId: child.id,
-        location: child.dropoffLocation,
+        location: parentLocations[child.parentId],
         name: child.name
       })));
     }
-
     // Optimize route using simple nearest neighbor algorithm
     const optimizedStops = optimizeRoute(startLocation, stops);
-
     return {
       startLocation,
       stops: optimizedStops

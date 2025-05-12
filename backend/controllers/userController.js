@@ -167,6 +167,22 @@ const deleteUserByIdAdmin = async (req, res) => {
   }
 };
 
+// Update FCM token for user
+const updateFcmToken = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { fcmToken } = req.body;
+    if (!fcmToken) {
+      return res.status(400).json({ message: 'FCM token is required' });
+    }
+    await updateUser(uid, { fcmToken });
+    res.status(200).json({ message: 'FCM token updated successfully' });
+  } catch (error) {
+    console.error('Error updating FCM token:', error);
+    res.status(500).json({ message: 'Error updating FCM token', error: error.message });
+  }
+};
+
 module.exports = {
   registerUser,
   getCurrentUserProfile,
@@ -175,5 +191,6 @@ module.exports = {
   deleteUserAccount,
   getAllUsersAdmin,
   getUsersByTypeAdmin,
-  deleteUserByIdAdmin
+  deleteUserByIdAdmin,
+  updateFcmToken
 }; 

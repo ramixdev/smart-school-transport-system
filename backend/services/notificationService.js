@@ -1,4 +1,4 @@
-const { db } = require('../config/firebase');
+const { db, admin } = require('../config/firebase');
 const { createError, ErrorCodes } = require('../utils/errors');
 
 // Create enrollment request
@@ -135,6 +135,7 @@ const processEnrollmentRequest = async (requestId, status, driverId) => {
 // Create notification
 const createNotification = async (userId, type, message, data = {}) => {
   try {
+    // Create Firestore notification
     const notificationRef = await db.collection('notifications').add({
       userId,
       type,
@@ -143,6 +144,30 @@ const createNotification = async (userId, type, message, data = {}) => {
       read: false,
       createdAt: new Date()
     });
+
+    // Fetch user's FCM token
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userData = userDoc.exists ? userDoc.data() : null;
+    const fcmToken = userData && userData.fcmToken ? userData.fcmToken : null;
+
+    // Send FCM push notification if token exists
+    if (fcmToken) {
+      const payload = {
+        notification: {
+          title: type.charAt(0).toUpperCase() + type.slice(1).replace('_', ' '),
+          body: message
+        },
+        data: {
+          type,
+          ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]))
+        }
+      };
+      try {
+        await admin.messaging().sendToDevice(fcmToken, payload);
+      } catch (fcmError) {
+        console.error('FCM send error:', fcmError);
+      }
+    }
 
     return { id: notificationRef.id, message };
   } catch (error) {
