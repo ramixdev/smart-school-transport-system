@@ -1,6 +1,7 @@
 const { getUserById } = require('../models/userModel');
 const { createChild, updateChild, deleteChild, getChildrenByParentId, getChildById } = require('../models/childModel');
 const { createEnrollmentRequest, getEnrollmentsByParentId } = require('../models/enrollmentModel');
+const { createFeedback, updateFeedback, getFeedbackByParentAndDriver, getDriverRating } = require('../models/feedbackModel');
 const { uploadToFirebase } = require('../utils/firebaseStorage');
 
 // Get parent profile with all children
@@ -227,6 +228,72 @@ const getEnrollmentRequests = async (req, res) => {
   }
 };
 
+// Rate a driver
+const rateDriver = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { driverId, rating, comment } = req.body;
+
+    if (!driverId || !rating) {
+      return res.status(400).json({ message: 'Driver ID and rating are required' });
+    }
+
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({ message: 'Rating must be between 1 and 5' });
+    }
+
+    // Check if parent has already rated this driver
+    const existingFeedback = await getFeedbackByParentAndDriver(uid, driverId);
+
+    if (existingFeedback) {
+      // Update existing rating
+      const updatedFeedback = await updateFeedback(existingFeedback.id, {
+        rating,
+        comment: comment || existingFeedback.comment
+      }, existingFeedback.rating);
+      return res.status(200).json({ message: 'Rating updated successfully', feedback: updatedFeedback });
+    }
+
+    // Create new rating
+    const feedback = await createFeedback({
+      parentId: uid,
+      driverId,
+      rating,
+      comment: comment || ''
+    });
+
+    res.status(201).json({ message: 'Rating submitted successfully', feedback });
+  } catch (error) {
+    console.error('Error rating driver:', error);
+    res.status(500).json({ message: 'Error rating driver', error: error.message });
+  }
+};
+
+// Get driver's rating
+const getDriverRatingDetails = async (req, res) => {
+  try {
+    const { driverId } = req.params;
+    const { uid } = req.user;
+
+    // Get driver's overall rating
+    const driverRating = await getDriverRating(driverId);
+    if (!driverRating) {
+      return res.status(404).json({ message: 'Driver not found' });
+    }
+
+    // Get parent's rating for this driver if exists
+    const parentRating = await getFeedbackByParentAndDriver(uid, driverId);
+
+    res.status(200).json({
+      driverRating,
+      parentRating
+    });
+  } catch (error) {
+    console.error('Error getting driver rating:', error);
+    res.status(500).json({ message: 'Error getting driver rating', error: error.message });
+  }
+};
+
 module.exports = {
   getParentProfile,
   addChild,
@@ -235,5 +302,7 @@ module.exports = {
   deleteChildProfile,
   markChildAbsent,
   requestDriverEnrollment,
-  getEnrollmentRequests
+  getEnrollmentRequests,
+  rateDriver,
+  getDriverRatingDetails
 }; 
