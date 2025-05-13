@@ -1,9 +1,10 @@
 // app/(auth)/parent-add-child.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Modal, Platform, Dimensions, KeyboardAvoidingView } from 'react-native';
 import { router } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { FontAwesome, MaterialIcons } from '@expo/vector-icons';
+import { getSchools } from '../../services/api';
 
 export default function ParentAddChildScreen() {
   const [childName, setChildName] = useState('');
@@ -18,14 +19,23 @@ export default function ParentAddChildScreen() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear() - 10); // Default to 10 years ago
   
-  // Mock schools list - in real app, fetch from database
-  const schools = [
-    'St. Peter\'s College, Galle Road, Colombo, Sri Lanka',
-    'Ananda College, Maradana Road, Colombo, Sri Lanka',
-    'Royal College, Rajakeeya Mawatha, Colombo, Sri Lanka',
-    'Isipathana College, Colombo, Sri Lanka',
-    'Nalanda College, Colombo, Sri Lanka'
-  ];
+  const [schools, setSchools] = useState<{ id: string; name: string }[]>([]);
+  const [schoolsLoading, setSchoolsLoading] = useState(true);
+  
+  useEffect(() => {
+    async function fetchSchools() {
+      setSchoolsLoading(true);
+      try {
+        const schoolsList = await getSchools();
+        setSchools(schoolsList);
+      } catch (error) {
+        setSchools([]);
+      } finally {
+        setSchoolsLoading(false);
+      }
+    }
+    fetchSchools();
+  }, []);
   
   const handleNext = () => {
     // Validate inputs
@@ -33,25 +43,29 @@ export default function ParentAddChildScreen() {
       alert('Please enter your child\'s name');
       return;
     }
-
     if (!grade.trim()) {
       alert('Please enter your child\'s grade');
       return;
     }
-    
     if (!dateOfBirth) {
       alert('Please select your child\'s date of birth');
       return;
     }
-    
     if (!selectedSchool) {
       alert('Please select your child\'s school');
       return;
     }
-    
-    // Store the child details
-    // Move to the driver selection screen
-    router.push('/(auth)/parent-select-driver');
+    // Move to the driver selection screen, passing schoolId and child details
+    router.push({
+      pathname: '/(auth)/parent-select-driver',
+      params: {
+        schoolId: schools.find(s => s.name === selectedSchool)?.id || selectedSchool,
+        childName,
+        grade,
+        dateOfBirth,
+        schoolName: selectedSchool
+      }
+    });
   };
   
   const confirmDate = () => {
@@ -231,40 +245,27 @@ export default function ParentAddChildScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.schoolsModal}>
-            <Text style={styles.modalTitle}>Select School</Text>
+            <Text style={styles.schoolsModalTitle}>Select School</Text>
             <ScrollView style={styles.schoolsList}>
-              {schools.map((schoolName, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.schoolItem,
-                    selectedSchool === schoolName && styles.selectedSchoolItem
-                  ]}
-                  onPress={() => {
-                    setSelectedSchool(schoolName);
-                    setSchoolsMenuVisible(false);
-                  }}
-                >
-                  <FontAwesome 
-                    name="graduation-cap" 
-                    size={24} 
-                    color={selectedSchool === schoolName ? "#5B9BD5" : "#757575"} 
-                    style={styles.schoolIcon}
-                  />
-                  <Text style={[
-                    styles.schoolText,
-                    selectedSchool === schoolName && styles.selectedSchoolText
-                  ]}>
-                    {schoolName}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {schoolsLoading ? (
+                <Text>Loading schools...</Text>
+              ) : (
+                schools.map((school) => (
+                  <TouchableOpacity
+                    key={school.id}
+                    style={styles.schoolItem}
+                    onPress={() => {
+                      setSelectedSchool(school.name || school.id);
+                      setSchoolsMenuVisible(false);
+                    }}
+                  >
+                    <Text style={styles.schoolName}>{school.name || school.id}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
             </ScrollView>
-            <TouchableOpacity 
-              style={styles.cancelButton}
-              onPress={() => setSchoolsMenuVisible(false)}
-            >
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+            <TouchableOpacity style={styles.closeModalButton} onPress={() => setSchoolsMenuVisible(false)}>
+              <Text style={styles.closeModalButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -434,7 +435,7 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     maxHeight: '80%',
   },
-  modalTitle: {
+  schoolsModalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 16,
@@ -450,28 +451,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
   },
-  selectedSchoolItem: {
-    backgroundColor: '#f0f9fb',
-  },
-  schoolIcon: {
-    marginRight: 16,
-  },
-  schoolText: {
+  schoolName: {
     fontSize: 16,
     flex: 1,
   },
-  selectedSchoolText: {
-    color: '#5B9BD5',
-    fontWeight: 'bold',
-  },
-  cancelButton: {
+  closeModalButton: {
     marginTop: 16,
     backgroundColor: '#f0f0f0',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
   },
-  cancelButtonText: {
+  closeModalButtonText: {
     fontSize: 16,
     fontWeight: '500',
     color: '#333',

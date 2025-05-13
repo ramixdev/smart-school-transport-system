@@ -6,59 +6,49 @@ import { Colors } from '../../constants/Colors';
 import { FontAwesome } from '@expo/vector-icons';
 import StarRating from '../../components/StarRating';
 import { getDriverRating } from '../../services/api';
-
-// Initial driver data without ratings
-const DRIVERS = [
-  { 
-    id: 1, 
-    name: 'Malsri De Silva', 
-    phone: '+94764856713',
-    schools: [
-      'St. Peter\'s College, Galle Road, Colombo, Sri Lanka',
-      'Ananda College, Maradana Road, Colombo, Sri Lanka'
-    ]
-  },
-  { 
-    id: 2, 
-    name: 'K D Indrasiri', 
-    phone: '+94776754983',
-    schools: [
-      'Royal College, Rajakeeya Mawatha, Colombo, Sri Lanka',
-      'Nalanda College, Colombo, Sri Lanka'
-    ]
-  },
-  { 
-    id: 3, 
-    name: 'Shehan Sampath', 
-    phone: '+94757689471',
-    schools: [
-      'Isipathana College, Colombo, Sri Lanka',
-      'St. Peter\'s College, Galle Road, Colombo, Sri Lanka'
-    ]
-  },
-];
+import { schoolAPI, parentAPI } from '../../constants/api';
 
 export default function ParentSelectDriverScreen() {
   const params = useLocalSearchParams();
-  const { returnTo, childId } = params;
+  const { schoolId, childName, grade, dateOfBirth, schoolName, childId } = params;
 
+  const [drivers, setDrivers] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedDriver, setSelectedDriver] = useState<number | null>(null);
-  const [filteredDrivers, setFilteredDrivers] = useState(DRIVERS);
+  const [selectedDriver, setSelectedDriver] = useState<string | null>(null);
+  const [filteredDrivers, setFilteredDrivers] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [driverRatings, setDriverRatings] = useState<{ [key: number]: { averageRating: number, totalRatings: number } }>({});
+  const [driverRatings, setDriverRatings] = useState<{ [key: string]: { averageRating: number, totalRatings: number } }>({});
   const [isLoadingRatings, setIsLoadingRatings] = useState(true);
-  
+  const [isLoadingDrivers, setIsLoadingDrivers] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    // Fetch drivers for the selected school
+    async function fetchDrivers() {
+      setIsLoadingDrivers(true);
+      try {
+        if (!schoolId) return;
+        const res = await schoolAPI.getDriversBySchool(schoolId as string);
+        setDrivers(res.drivers || []);
+        setFilteredDrivers(res.drivers || []);
+      } catch (error) {
+        setDrivers([]);
+        setFilteredDrivers([]);
+      } finally {
+        setIsLoadingDrivers(false);
+      }
+    }
+    fetchDrivers();
+  }, [schoolId]);
+
   useEffect(() => {
     // Fetch ratings for all drivers
     const fetchDriverRatings = async () => {
       try {
-        const ratings: { [key: number]: { averageRating: number, totalRatings: number } } = {};
-        
-        // Fetch ratings for each driver
+        const ratings: { [key: string]: { averageRating: number, totalRatings: number } } = {};
         await Promise.all(
-          DRIVERS.map(async (driver) => {
-            const ratingData = await getDriverRating(driver.id.toString());
+          drivers.map(async (driver) => {
+            const ratingData = await getDriverRating(driver.id);
             if (ratingData) {
               ratings[driver.id] = {
                 averageRating: ratingData.averageRating,
@@ -67,68 +57,66 @@ export default function ParentSelectDriverScreen() {
             }
           })
         );
-        
         setDriverRatings(ratings);
         setIsLoadingRatings(false);
       } catch (error) {
-        console.error('Error fetching driver ratings:', error);
         setIsLoadingRatings(false);
       }
     };
-
-    fetchDriverRatings();
-  }, []);
+    if (drivers.length > 0) {
+      setIsLoadingRatings(true);
+      fetchDriverRatings();
+    }
+  }, [drivers]);
 
   useEffect(() => {
     // Filter drivers based on search query
     if (searchQuery.trim() === '') {
-      setFilteredDrivers(DRIVERS);
+      setFilteredDrivers(drivers);
       return;
     }
-    
     setIsSearching(true);
-    
-    // Simulate API delay
     const timer = setTimeout(() => {
       const query = searchQuery.toLowerCase();
-      
-      // Filter drivers that serve the searched school
-      const results = DRIVERS.filter(driver => 
-        driver.schools.some(school => 
-          school.toLowerCase().includes(query)
-        ) ||
-        driver.name.toLowerCase().includes(query)
+      const results = drivers.filter(driver =>
+        (driver.schools && driver.schools.some((school: string) => school.toLowerCase().includes(query))) ||
+        (driver.name && driver.name.toLowerCase().includes(query))
       );
-      
       setFilteredDrivers(results);
       setIsSearching(false);
     }, 500);
-    
     return () => clearTimeout(timer);
-  }, [searchQuery]);
-  
-  const handleSave = () => {
+  }, [searchQuery, drivers]);
+
+  const handleSave = async () => {
     if (!selectedDriver) return;
-    
-    // Save the selected driver and complete registration
-    if (returnTo === 'edit-child') {
-      // Return to edit-child page with selected driver
-      router.back();
-    } else {
-      // Complete registration and go to parent home
+    setIsSubmitting(true);
+    try {
+      // If childId is not present, you may need to create the child first (not handled here)
+      // For now, assume childId is available or handle accordingly
+      const enrollmentData = {
+        childId: childId as string, // should be set after child creation
+        driverId: selectedDriver,
+        schoolId: schoolId as string
+      };
+      await parentAPI.requestEnrollment(enrollmentData);
+      alert('Enrollment request sent to the driver!');
       router.replace('/(parent)');
+    } catch (error: any) {
+      alert(error?.message || 'Failed to send enrollment request.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
-  
+
   const handleBack = () => {
     router.back();
   };
 
-  const renderDriverItem = (driver: typeof DRIVERS[0]) => {
+  const renderDriverItem = (driver: any) => {
     const driverRating = driverRatings[driver.id];
-    
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         key={driver.id}
         style={[
           styles.driverItem,
@@ -144,10 +132,10 @@ export default function ParentSelectDriverScreen() {
             <Text style={styles.driverName}>{driver.name}</Text>
             {!isLoadingRatings && driverRating && (
               <View style={styles.ratingContainer}>
-                <StarRating 
-                  rating={driverRating.averageRating} 
-                  size={16} 
-                  disabled={true} 
+                <StarRating
+                  rating={driverRating.averageRating}
+                  size={16}
+                  disabled={true}
                 />
                 <Text style={styles.ratingText}>
                   ({driverRating.totalRatings})
@@ -157,11 +145,11 @@ export default function ParentSelectDriverScreen() {
           </View>
           <Text style={styles.driverPhone}>{driver.phone}</Text>
           <View style={styles.schoolsList}>
-            {driver.schools.map((school, index) => (
+            {driver.schools && driver.schools.map((school: string, index: number) => (
               <View key={index} style={styles.schoolTag}>
                 <FontAwesome name="graduation-cap" size={12} color="#5B9BD5" />
                 <Text style={styles.schoolText} numberOfLines={1} ellipsizeMode="tail">
-                  {school.split(',')[0]}
+                  {school}
                 </Text>
               </View>
             ))}
@@ -188,7 +176,6 @@ export default function ParentSelectDriverScreen() {
             <Text style={styles.title}>Select Driver</Text>
           </View>
           <Text style={styles.subtitle}>Select the driver you want for your child</Text>
-          
           <View style={styles.formContainer}>
             <View style={styles.searchContainer}>
               <FontAwesome name="search" size={16} color="#999" style={styles.searchIcon} />
@@ -199,7 +186,7 @@ export default function ParentSelectDriverScreen() {
                 onChangeText={setSearchQuery}
               />
               {searchQuery.length > 0 && (
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => setSearchQuery('')}
                   style={styles.clearButton}
                 >
@@ -207,8 +194,12 @@ export default function ParentSelectDriverScreen() {
                 </TouchableOpacity>
               )}
             </View>
-            
-            {isSearching ? (
+            {isLoadingDrivers ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color="#5B9BD5" />
+                <Text style={styles.loadingText}>Loading drivers...</Text>
+              </View>
+            ) : isSearching ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#5B9BD5" />
                 <Text style={styles.loadingText}>Searching drivers...</Text>
@@ -225,13 +216,12 @@ export default function ParentSelectDriverScreen() {
               </View>
             )}
           </View>
-          
-          <TouchableOpacity 
-            style={[styles.saveButton, !selectedDriver && styles.disabledButton]} 
+          <TouchableOpacity
+            style={[styles.saveButton, (!selectedDriver || isSubmitting) && styles.disabledButton]}
             onPress={handleSave}
-            disabled={!selectedDriver}
+            disabled={!selectedDriver || isSubmitting}
           >
-            <Text style={styles.saveButtonText}>Save</Text>
+            <Text style={styles.saveButtonText}>{isSubmitting ? 'Submitting...' : 'Save'}</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
