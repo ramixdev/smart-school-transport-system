@@ -1,10 +1,14 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, StyleSheet, Linking, Pressable } from 'react-native';
 import { Text, Surface, Button, Avatar } from 'react-native-paper';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { Colors } from '../../constants/Colors';
+import { subscribeToDriverLocation } from '../../services/api';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../contexts/firebase';
+import { useAuth } from '../../contexts/firebase';
 
 // Temporary mock data - will be replaced with real-time data
 const mockChildren = [
@@ -92,132 +96,197 @@ interface ChildTracking {
   }>;
 }
 
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const R = 6371; // km
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // distance in km
+}
+
 export default function Page() {
-  const [selectedChild, setSelectedChild] = useState<ChildTracking | null>(mockChildren[0]);
-  const [mapRegion, setMapRegion] = useState({
-    latitude: mockChildren[0].currentLocation.latitude,
-    longitude: mockChildren[0].currentLocation.longitude,
-    latitudeDelta: 0.0422,
-    longitudeDelta: 0.0221,
-  });
+  const { childId } = useLocalSearchParams();
+  const { user } = useAuth();
+  const [children, setChildren] = useState<any[]>([]);
+  const [selectedChild, setSelectedChild] = useState<any>(null);
+  const [driverLocation, setDriverLocation] = useState<{ latitude: number; longitude: number; timestamp: number } | null>(null);
+  const [mapRegion, setMapRegion] = useState<any>(null);
+  const [route, setRoute] = useState<Array<{ latitude: number; longitude: number }>>([]);
+  const [destination, setDestination] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [eta, setEta] = useState<number | null>(null);
 
-  const handleCallDriver = useCallback((phoneNumber: string) => {
-    Linking.openURL(`tel:${phoneNumber}`);
-  }, []);
+  // Fetch all children for the parent
+  useEffect(() => {
+    if (!user) return;
+    async function fetchChildren() {
+      const q = query(collection(db, 'children'), where('parentId', '==', user.uid));
+      const querySnapshot = await getDocs(q);
+      const childrenList: any[] = [];
+      querySnapshot.forEach((doc) => {
+        childrenList.push({ id: doc.id, ...doc.data() });
+      });
+      setChildren(childrenList);
+      // Select the child from param or default to first
+      const found = childrenList.find((c) => c.id === childId);
+      setSelectedChild(found || childrenList[0] || null);
+    }
+    fetchChildren();
+  }, [user, childId]);
 
-  const handleChildSelect = useCallback((child: ChildTracking) => {
-    setSelectedChild(child);
-    setMapRegion(prev => ({
-      ...prev,
-      latitude: child.currentLocation.latitude,
-      longitude: child.currentLocation.longitude,
-    }));
-  }, []);
+  // Fetch school location for destination marker
+  useEffect(() => {
+    async function fetchDestination() {
+      if (selectedChild && selectedChild.school) {
+        const schoolDoc = await getDoc(doc(db, 'schools', selectedChild.school));
+        if (schoolDoc.exists()) {
+          const schoolData = schoolDoc.data();
+          if (schoolData.location) {
+            setDestination({ latitude: schoolData.location.latitude, longitude: schoolData.location.longitude });
+          }
+        }
+      }
+    }
+    fetchDestination();
+  }, [selectedChild]);
 
-  // Early return with loading state
-  if (!selectedChild) {
+  // Fetch route from journeys for the selected child
+  useEffect(() => {
+    async function fetchRoute() {
+      if (!selectedChild) return;
+      const journeysRef = collection(db, 'journeys');
+      const q = query(
+        journeysRef,
+        where('children', 'array-contains', selectedChild.id),
+        where('status', '==', 'in_progress')
+      );
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        const journeyDoc = querySnapshot.docs[0];
+        const journeyData = journeyDoc.data();
+        if (journeyData.route && journeyData.route.stops) {
+          setRoute(journeyData.route.stops.map((stop: any) => stop.location));
+        } else {
+          setRoute([]);
+        }
+      } else {
+        setRoute([]);
+      }
+    }
+    fetchRoute();
+  }, [selectedChild]);
+
+  // Subscribe to driver's location
+  useEffect(() => {
+    if (!selectedChild || !selectedChild.driver) return;
+    const unsubscribe = subscribeToDriverLocation(selectedChild.driver, (location) => {
+      setDriverLocation(location);
+      if (location) {
+        setMapRegion((prev: any) => ({
+          ...prev,
+          latitude: location.latitude,
+          longitude: location.longitude,
+        }));
+      }
+    });
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [selectedChild]);
+
+  // Calculate ETA (simple straight-line, assume 30km/h average speed)
+  useEffect(() => {
+    if (driverLocation && destination) {
+      const dist = haversineDistance(driverLocation.latitude, driverLocation.longitude, destination.latitude, destination.longitude);
+      const speed = 30; // km/h
+      const etaMinutes = Math.round((dist / speed) * 60);
+      setEta(etaMinutes);
+    } else {
+      setEta(null);
+    }
+  }, [driverLocation, destination]);
+
+  if (!selectedChild || !driverLocation) {
     return (
-      <View style={styles.container}>
-        <Stack.Screen options={{ headerShown: false }} />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
         <Text>Loading...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1 }}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={styles.header}>
-        <MaterialIcons 
-          name="arrow-back" 
-          size={24} 
-          onPress={() => router.back()} 
-          style={styles.backButton}
-        />
-        <Text variant="headlineMedium" style={styles.title}>Live Track</Text>
-        <MaterialIcons 
-          name="layers" 
-          size={24} 
-          style={styles.layersButton}
-          onPress={() => {/* TODO: Implement layer switching */}}
-        />
-      </View>
-
-      <View style={styles.mapContainer}>
-        <MapView
-          style={styles.map}
-          region={mapRegion}
-          onRegionChangeComplete={setMapRegion}
-          showsUserLocation
-          showsMyLocationButton
-          zoomEnabled
-          rotateEnabled
+      {/* Child selector for multiple children */}
+      {children.length > 1 && (
+        <View style={{ flexDirection: 'row', justifyContent: 'center', margin: 8 }}>
+          {children.map((child) => (
+            <Button
+              key={child.id}
+              mode={selectedChild.id === child.id ? 'contained' : 'outlined'}
+              onPress={() => setSelectedChild(child)}
+              style={{ marginHorizontal: 4 }}
+            >
+              {child.name}
+            </Button>
+          ))}
+        </View>
+      )}
+      {/* ETA display */}
+      {eta !== null && (
+        <View style={{ alignItems: 'center', margin: 8 }}>
+          <Text style={{ fontSize: 16, fontWeight: 'bold' }}>ETA: {eta} min</Text>
+        </View>
+      )}
+      <MapView
+        style={{ flex: 1 }}
+        region={mapRegion || {
+          latitude: driverLocation.latitude,
+          longitude: driverLocation.longitude,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
+        }}
+        onRegionChangeComplete={setMapRegion}
+        showsUserLocation
+        showsMyLocationButton
+        zoomEnabled
+        rotateEnabled
+      >
+        {/* Driver marker */}
+        <Marker
+          coordinate={{ latitude: driverLocation.latitude, longitude: driverLocation.longitude }}
+          title={selectedChild.driverName || 'Driver'}
+          description={`Driver of ${selectedChild.name}`}
         >
+          <View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 20, elevation: 3 }}>
+            <MaterialIcons name="directions-bus" size={24} color={Colors.light.primary} />
+          </View>
+        </Marker>
+        {/* Destination marker */}
+        {destination && (
           <Marker
-            coordinate={selectedChild.currentLocation}
-            title={selectedChild.driverName}
-            description={`Driver of ${selectedChild.childName}`}
-          >
-            <View style={styles.vehicleMarker}>
-              <MaterialIcons name="directions-bus" size={24} color={Colors.light.primary} />
-            </View>
-          </Marker>
-
-          <Marker
-            coordinate={selectedChild.destination}
+            coordinate={destination}
             title="Destination"
-            description="Drop-off location"
+            description="School location"
           >
-            <View style={styles.destinationMarker}>
+            <View style={{ backgroundColor: '#fff', padding: 8, borderRadius: 20, elevation: 3 }}>
               <MaterialIcons name="location-on" size={24} color={Colors.light.error} />
             </View>
           </Marker>
-
+        )}
+        {/* Route polyline */}
+        {route.length > 1 && (
           <Polyline
-            coordinates={selectedChild.route}
+            coordinates={route}
             strokeColor={Colors.light.primary}
             strokeWidth={3}
           />
-        </MapView>
-      </View>
-
-      <View style={styles.childList}>
-        {mockChildren.map((child) => (
-          <Pressable
-            key={child.id}
-            onPress={() => handleChildSelect(child)}
-          >
-            <Surface 
-              style={[
-                styles.childCard,
-                selectedChild.id === child.id && styles.selectedCard
-              ].filter(Boolean)} 
-              elevation={1}
-            >
-              <View style={styles.childCardContent}>
-                <Avatar.Icon 
-                  size={40} 
-                  icon="account" 
-                  style={styles.avatar}
-                  color={Colors.light.primary}
-                />
-                <View style={styles.childInfo}>
-                  <Text variant="titleMedium" style={styles.childName}>{child.childName}</Text>
-                  <Text variant="bodyMedium" style={styles.driverInfo}>{child.driverName}</Text>
-                  <Text variant="bodyMedium" style={styles.eta}>ETA: {child.eta} minutes</Text>
-                </View>
-                <Button
-                  mode="contained"
-                  onPress={() => handleCallDriver(child.driverPhone)}
-                  style={styles.callButton}
-                >
-                  Call Driver
-                </Button>
-              </View>
-            </Surface>
-          </Pressable>
-        ))}
-      </View>
+        )}
+      </MapView>
     </View>
   );
 }

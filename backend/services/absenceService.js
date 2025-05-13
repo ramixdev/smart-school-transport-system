@@ -1,6 +1,8 @@
 const { db } = require('../config/firebase');
 const { createError, ErrorCodes } = require('../utils/errors');
 const { validateDate } = require('../utils/validation');
+const { calculateETAAndDistance } = require('./locationService');
+const { createNotification } = require('./notificationService');
 
 // Mark child as absent
 const markChildAbsent = async (childId, date, reason = '') => {
@@ -58,6 +60,8 @@ const markChildAbsent = async (childId, date, reason = '') => {
           await doc.ref.update({
             route: updatedRoute
           });
+          // Notify parents if ETA is earlier
+          await notifyParentsOfEarlyArrival(journey, updatedRoute);
         }
       }
     }
@@ -192,6 +196,37 @@ const getAbsencesByDate = async (date) => {
     throw createError(ErrorCodes.DATABASE_ERROR, `Error getting absences by date: ${error.message}`);
   }
 };
+
+// Helper: Get baseline ETAs for each child (could be stored or calculated once)
+async function getBaselineETAs(journey) {
+  // For simplicity, assume baseline ETAs are stored in journey.baselineEtas
+  // If not, calculate using the original route before absence
+  return journey.baselineEtas || {};
+}
+
+// Helper: Notify parents if ETA is earlier by threshold
+async function notifyParentsOfEarlyArrival(journey, updatedRoute, thresholdMinutes = 10) {
+  const baselineEtas = await getBaselineETAs(journey);
+  for (const stop of updatedRoute.stops) {
+    if (stop.childId && stop.type === 'pickup') {
+      // Calculate new ETA
+      const etaResult = await calculateETAAndDistance(journey.driverId, stop.location);
+      const newEta = etaResult.eta;
+      const baselineEta = baselineEtas[stop.childId];
+      if (baselineEta && baselineEta - newEta >= thresholdMinutes) {
+        // Send notification to parent
+        const childDoc = await db.collection('children').doc(stop.childId).get();
+        const parentId = childDoc.data().parentId;
+        await createNotification(
+          parentId,
+          'early_arrival',
+          `The driver will arrive at your location approximately ${baselineEta - newEta} minutes earlier today due to route changes.`,
+          { childId: stop.childId, newEta, baselineEta }
+        );
+      }
+    }
+  }
+}
 
 module.exports = {
   markChildAbsent,

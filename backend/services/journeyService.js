@@ -1,6 +1,7 @@
 const { db } = require('../config/firebase');
 const { createError, ErrorCodes } = require('../utils/errors');
 const { validateLocation } = require('../utils/validation');
+const axios = require('axios');
 
 // Create a new journey
 const createJourney = async (driverId, type, date) => {
@@ -50,6 +51,30 @@ const createJourney = async (driverId, type, date) => {
     throw createError(ErrorCodes.DATABASE_ERROR, `Error creating journey: ${error.message}`);
   }
 };
+
+// Helper: Call Google Maps Route Optimization API
+async function callGoogleRouteOptimizationAPI(startLocation, stops) {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) throw new Error('Google Maps API key not set');
+
+  // Prepare waypoints (lat,lng)
+  const waypoints = stops.map(stop => `${stop.location.latitude},${stop.location.longitude}`);
+  const origin = `${startLocation.latitude},${startLocation.longitude}`;
+  const destination = waypoints[waypoints.length - 1];
+  const waypointsStr = waypoints.slice(0, -1).join('|');
+
+  // Use Directions API with optimize:true for waypoint optimization
+  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&waypoints=optimize:true|${waypointsStr}&key=${apiKey}`;
+  const response = await axios.get(url);
+  if (response.data.status !== 'OK') throw new Error('Google Maps API error: ' + response.data.status);
+
+  // Get optimized order
+  const order = response.data.routes[0].waypoint_order;
+  const optimizedStops = order.map(i => stops[i]);
+  // Add the destination as the last stop
+  optimizedStops.push(stops[stops.length - 1]);
+  return optimizedStops;
+}
 
 // Generate optimized route
 const generateRoute = async (driverId, children, type) => {
@@ -132,8 +157,14 @@ const generateRoute = async (driverId, children, type) => {
         name: child.name
       })));
     }
-    // Optimize route using simple nearest neighbor algorithm
-    const optimizedStops = optimizeRoute(startLocation, stops);
+    // Try Google Maps API for optimization
+    let optimizedStops;
+    try {
+      optimizedStops = await callGoogleRouteOptimizationAPI(startLocation, stops);
+    } catch (err) {
+      // Fallback to custom nearest neighbor
+      optimizedStops = optimizeRoute(startLocation, stops);
+    }
     return {
       startLocation,
       stops: optimizedStops

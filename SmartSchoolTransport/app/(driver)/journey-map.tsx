@@ -4,6 +4,9 @@ import { Text, Surface, IconButton } from 'react-native-paper';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
+import * as Location from 'expo-location';
+import { updateDriverLocation } from '../../services/api';
+import { useAuth } from '../../contexts/firebase';
 
 // Mock data - replace with actual data from your database
 const mockJourneyData = {
@@ -77,6 +80,7 @@ export default function JourneyMap() {
     latitudeDelta: 0.0922,
     longitudeDelta: 0.0421,
   });
+  const { user } = useAuth();
 
   const isEvening = journeyType === 'evening';
   const journeyData = isEvening ? mockJourneyData.evening : mockJourneyData.morning;
@@ -115,6 +119,34 @@ export default function JourneyMap() {
   const handleBackPress = () => {
     router.replace('/(driver)');
   };
+
+  useEffect(() => {
+    let locationSubscription: Location.LocationSubscription | null = null;
+    let isMounted = true;
+
+    async function startLocationUpdates() {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        console.log('Permission to access location was denied');
+        return;
+      }
+      locationSubscription = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 10 },
+        async (loc) => {
+          if (!isMounted || !user) return;
+          const driverId = user.uid; // Replace with actual driver UID if needed
+          await updateDriverLocation(driverId, loc.coords.latitude, loc.coords.longitude);
+        }
+      );
+    }
+    startLocationUpdates();
+    return () => {
+      isMounted = false;
+      if (locationSubscription) {
+        locationSubscription.remove();
+      }
+    };
+  }, [user]);
 
   return (
     <View style={styles.container}>

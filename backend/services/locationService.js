@@ -1,6 +1,7 @@
 const { db, realtimeDb } = require('../config/firebase');
 const { validateLocation } = require('../utils/validation');
 const { createError, ErrorCodes } = require('../utils/errors');
+const axios = require('axios');
 
 // Update driver's real-time location
 const updateDriverLocation = async (driverId, location) => {
@@ -46,7 +47,28 @@ const calculateETAAndDistance = async (driverId, destinationLocation) => {
       throw createError(ErrorCodes.NOT_FOUND, 'Current location not found');
     }
 
-    // Calculate distance using Haversine formula
+    // Try Google Distance Matrix API
+    try {
+      const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+      const origins = `${currentLocation.location.latitude},${currentLocation.location.longitude}`;
+      const destinations = `${destinationLocation.latitude},${destinationLocation.longitude}`;
+      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origins}&destinations=${destinations}&key=${apiKey}`;
+      const response = await axios.get(url);
+      if (response.data.status === 'OK' && response.data.rows[0].elements[0].status === 'OK') {
+        const element = response.data.rows[0].elements[0];
+        return {
+          distance: element.distance.value / 1000, // km
+          eta: Math.ceil(element.duration.value / 60), // minutes
+          unit: 'km',
+          currentLocation: currentLocation.location,
+          lastUpdated: currentLocation.timestamp
+        };
+      }
+    } catch (err) {
+      // Fallback to Haversine below
+    }
+
+    // Fallback: Calculate distance using Haversine formula
     const R = 6371; // Earth's radius in km
     const lat1 = currentLocation.location.latitude;
     const lon1 = currentLocation.location.longitude;

@@ -1,5 +1,5 @@
 import { initializeApp, getApp } from 'firebase/app';
-import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
+import { initializeAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,6 +19,15 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
+
+// Try to import getReactNativePersistence from 'firebase/auth/react-native', fallback to 'firebase/auth' if not available
+let getReactNativePersistence: any;
+try {
+  getReactNativePersistence = require('firebase/auth/react-native').getReactNativePersistence;
+} catch (e) {
+  getReactNativePersistence = require('firebase/auth').getReactNativePersistence;
+  // If this fails, ensure you have the correct Firebase version and check documentation.
+}
 
 // Initialize Firebase Authentication with AsyncStorage persistence
 const auth = initializeAuth(app, {
@@ -51,7 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
+    const unsubscribe = auth.onAuthStateChanged((user: any) => {
       setUser(user);
       setLoading(false);
     });
