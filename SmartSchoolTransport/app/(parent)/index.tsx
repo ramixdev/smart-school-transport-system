@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router';
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { Menu, Portal, Dialog, Button } from 'react-native-paper';
-import { getParentProfile, deleteChild } from '@/services/api';
+import { getParentProfile, deleteChild, markChildAbsent } from '@/services/api';
 
 // Define valid route paths
 type ParentRoutes = {

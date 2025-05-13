@@ -4,9 +4,10 @@ import { Text, Avatar } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import { MaterialIcons } from '@expo/vector-icons';
 import StarRating from '../../components/StarRating';
-import { getDriverDetails, getDriverRating, rateDriver } from '@/services/api';
+import { getDriverDetails, getDriverRating, rateDriver, getChildDetails } from '@/services/api';
 
 interface DriverDetails {
+  id: string;
   name: string;
   profileImage: string | null;
   contactNumber: string;
