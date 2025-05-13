@@ -5,6 +5,7 @@ import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useState } from 'react';
 import Constants from 'expo-constants';
+import { getDatabase } from 'firebase/database';
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
@@ -29,6 +30,9 @@ const db = getFirestore(app);
 
 // Initialize Storage
 const storage = getStorage(app);
+
+// Initialize Realtime Database
+const database = getDatabase(app);
 
 // Create the auth context
 type AuthContextType = {
@@ -71,4 +75,4 @@ export function useAuth() {
   return context;
 }
 
-export { auth, db, storage }; 
+export { auth, db, storage, database }; 
