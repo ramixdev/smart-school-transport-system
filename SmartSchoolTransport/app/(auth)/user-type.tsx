@@ -18,16 +18,7 @@ export default function UserTypeScreen() {
   }
 
   const handleSelectUserType = (userType: UserType) => {
-    if (userType === 'parent') {
-      router.push('/(auth)/parent-signup');
-    } else if (userType === 'driver') {
-      router.push('/(auth)/driver-signup-personal');
-    } else if (userType === 'admin') {
-      router.push({
-        pathname: '/(auth)/login',
-        params: { userType }
-      });
-    }
+    router.push({ pathname: '/(auth)/auth-landing', params: { userType } } as any);
   };
 
   return (

@@ -3,9 +3,10 @@ import React, { useState } from 'react';
 import { SafeAreaView, View, Text, StyleSheet, TextInput, TouchableOpacity, Image, Alert, Dimensions } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Colors } from '../../constants/Colors';
-import { auth } from '../../contexts/firebase';
+import { auth, db } from '../../contexts/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useFonts } from 'expo-font';
+import { doc, getDoc } from 'firebase/firestore';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -32,13 +33,28 @@ export default function LoginScreen() {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Check user type from custom claims or user data
-      // For now, we'll use the userType from params
-      if (userType === 'parent') {
+      // Fetch user role from Firestore
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (!userDoc.exists()) {
+        Alert.alert('Error', 'User profile not found. Please contact support or register again.');
+        return;
+      }
+      const userData = userDoc.data();
+      const actualRole = userData.role;
+      if (!actualRole) {
+        Alert.alert('Error', 'User role not set in your profile. Please contact support or register again.');
+        return;
+      }
+      if (userType && actualRole !== userType) {
+        Alert.alert('Error', `This account is registered as a ${actualRole}. Please log in as a ${actualRole}.`);
+        return;
+      }
+      // Route to correct dashboard
+      if (actualRole === 'parent') {
         router.replace('/(parent)');
-      } else if (userType === 'driver') {
+      } else if (actualRole === 'driver') {
         router.replace('/(driver)');
-      } else if (userType === 'admin') {
+      } else if (actualRole === 'admin') {
         router.replace('/(admin)');
       }
     } catch (error: any) {
