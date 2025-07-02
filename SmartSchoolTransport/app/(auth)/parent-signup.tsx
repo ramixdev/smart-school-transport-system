@@ -1,11 +1,15 @@
 // app/(auth)/parent-signup.tsx
 import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Modal, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Modal, Dimensions, KeyboardAvoidingView, Platform, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { FontAwesome } from '@expo/vector-icons';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { auth } from '../../contexts/firebase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../../contexts/firebase';
 
 export default function ParentSignUpScreen() {
   const [name, setName] = useState('');
@@ -23,10 +27,32 @@ export default function ParentSignUpScreen() {
   const [selectedLocation, setSelectedLocation] = useState(null);
   const mapRef = useRef(null);
   
-  const handleSignUp = () => {
-    // Store the parent details in a state management solution or context
-    // For now, let's just move to the next screen
-    router.push('/(auth)/parent-add-child');
+  const handleSignUp = async () => {
+    if (!name || !contact || !email || !password || !location) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    try {
+      // Create the user account in Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // Store additional parent data in Firestore
+      await setDoc(doc(db, 'users', user.uid), {
+        name,
+        email,
+        contact,
+        location,
+        userType: 'parent',
+        createdAt: new Date().toISOString()
+      });
+
+      // Navigate to add child screen
+      router.push('/(auth)/parent-add-child');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to create account');
+    }
   };
   
   const handleSetLocationFromMap = async () => {

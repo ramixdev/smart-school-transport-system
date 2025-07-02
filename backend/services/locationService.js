@@ -1,172 +1,256 @@
-const { db, realtimeDb } = require('../config/firebase');
-const { validateLocation } = require('../utils/validation');
-const { createError, ErrorCodes } = require('../utils/errors');
+const { realtimeDb, GOOGLE_MAPS_API_KEY, getCachedRoute, cacheRoute } = require('../config/firebase');
+const { ref, set, get, push, remove, query, orderByChild, limitToLast } = require('firebase/database');
 const axios = require('axios');
+
+// Constants
+const LOCATION_HISTORY_LIMIT = 100; // Keep last 100 location updates
+const GEOFENCE_RADIUS = 100; // meters
+const LOCATION_UPDATE_INTERVAL = 30000; // 30 seconds
+
+// Helper function to calculate distance between two points
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+          Math.cos(φ1) * Math.cos(φ2) *
+          Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c;
+};
 
 // Update driver's real-time location
 const updateDriverLocation = async (driverId, location) => {
   try {
-    if (!validateLocation(location)) {
-      throw createError(ErrorCodes.VALIDATION_ERROR, 'Invalid location data');
+    const locationRef = ref(realtimeDb, `locations/${driverId}`);
+    const historyRef = ref(realtimeDb, `locationHistory/${driverId}`);
+    
+    // Add timestamp to location data
+    const locationData = {
+      ...location,
+      timestamp: Date.now()
+    };
+
+    // Update current location
+    await set(locationRef, locationData);
+
+    // Add to history
+    const historyEntry = push(historyRef);
+    await set(historyEntry, locationData);
+
+    // Clean up old history entries
+    const historyQuery = query(historyRef, orderByChild('timestamp'), limitToLast(LOCATION_HISTORY_LIMIT));
+    const snapshot = await get(historyQuery);
+    const entries = snapshot.val() || {};
+    
+    // Remove entries beyond the limit
+    const entriesToRemove = Object.entries(entries)
+      .sort(([,a], [,b]) => a.timestamp - b.timestamp)
+      .slice(0, -LOCATION_HISTORY_LIMIT)
+      .map(([key]) => key);
+
+    for (const key of entriesToRemove) {
+      await remove(ref(realtimeDb, `locationHistory/${driverId}/${key}`));
     }
 
-    await realtimeDb.ref(`driver_locations/${driverId}`).set({
-      location,
-      timestamp: Date.now(),
-      updatedAt: new Date().toISOString()
-    });
-
-    return { success: true };
+    return locationData;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error updating driver location: ${error.message}`);
+    console.error('Error updating driver location:', error);
+    throw new Error('Failed to update driver location');
   }
 };
 
 // Get driver's current location
 const getDriverLocation = async (driverId) => {
   try {
-    const snapshot = await realtimeDb.ref(`driver_locations/${driverId}`).once('value');
-    if (!snapshot.exists()) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Driver location not found');
-    }
+    const locationRef = ref(realtimeDb, `locations/${driverId}`);
+    const snapshot = await get(locationRef);
     return snapshot.val();
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error getting driver location: ${error.message}`);
+    console.error('Error getting driver location:', error);
+    throw new Error('Failed to get driver location');
   }
 };
 
-// Calculate ETA and distance to destination
-const calculateETAAndDistance = async (driverId, destinationLocation) => {
+// Get driver's location history
+const getDriverLocationHistory = async (driverId, startTime, endTime) => {
   try {
-    if (!validateLocation(destinationLocation)) {
-      throw createError(ErrorCodes.VALIDATION_ERROR, 'Invalid destination location');
-    }
-
-    const currentLocation = await getDriverLocation(driverId);
-    if (!currentLocation) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Current location not found');
-    }
-
-    // Try Google Distance Matrix API
-    try {
-      const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-      const origins = `${currentLocation.location.latitude},${currentLocation.location.longitude}`;
-      const destinations = `${destinationLocation.latitude},${destinationLocation.longitude}`;
-      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origins}&destinations=${destinations}&key=${apiKey}`;
-      const response = await axios.get(url);
-      if (response.data.status === 'OK' && response.data.rows[0].elements[0].status === 'OK') {
-        const element = response.data.rows[0].elements[0];
-        return {
-          distance: element.distance.value / 1000, // km
-          eta: Math.ceil(element.duration.value / 60), // minutes
-          unit: 'km',
-          currentLocation: currentLocation.location,
-          lastUpdated: currentLocation.timestamp
-        };
-      }
-    } catch (err) {
-      // Fallback to Haversine below
-    }
-
-    // Fallback: Calculate distance using Haversine formula
-    const R = 6371; // Earth's radius in km
-    const lat1 = currentLocation.location.latitude;
-    const lon1 = currentLocation.location.longitude;
-    const lat2 = destinationLocation.latitude;
-    const lon2 = destinationLocation.longitude;
-
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const distance = R * c;
-
-    // Estimate ETA (assuming average speed of 40 km/h)
-    const averageSpeed = 40; // km/h
-    const eta = (distance / averageSpeed) * 60; // minutes
-
-    return {
-      distance: Math.round(distance * 10) / 10, // Round to 1 decimal place
-      eta: Math.ceil(eta), // Round up to nearest minute
-      unit: 'km',
-      currentLocation: currentLocation.location,
-      lastUpdated: currentLocation.timestamp
-    };
+    const historyRef = ref(realtimeDb, `locationHistory/${driverId}`);
+    const historyQuery = query(
+      historyRef,
+      orderByChild('timestamp'),
+      limitToLast(LOCATION_HISTORY_LIMIT)
+    );
+    
+    const snapshot = await get(historyQuery);
+    const history = snapshot.val() || {};
+    
+    return Object.values(history)
+      .filter(entry => {
+        const timestamp = entry.timestamp;
+        return (!startTime || timestamp >= startTime) && 
+               (!endTime || timestamp <= endTime);
+      })
+      .sort((a, b) => a.timestamp - b.timestamp);
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error calculating ETA: ${error.message}`);
+    console.error('Error getting driver location history:', error);
+    throw new Error('Failed to get driver location history');
   }
+};
+
+// Calculate ETA and distance using Google Distance Matrix API
+const calculateETA = async (origin, destination) => {
+  try {
+    const cacheKey = `${origin.lat},${origin.lng}-${destination.lat},${destination.lng}`;
+    const cached = getCachedRoute(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const response = await axios.get(
+      `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin.lat},${origin.lng}&destinations=${destination.lat},${destination.lng}&key=${GOOGLE_MAPS_API_KEY}`
+    );
+
+    if (response.data.status !== 'OK') {
+      throw new Error('Failed to calculate ETA');
+    }
+
+    const result = {
+      distance: response.data.rows[0].elements[0].distance,
+      duration: response.data.rows[0].elements[0].duration,
+      durationInTraffic: response.data.rows[0].elements[0].duration_in_traffic
+    };
+
+    cacheRoute(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.error('Error calculating ETA:', error);
+    throw new Error('Failed to calculate ETA');
+  }
+};
+
+// Check if location is within geofence
+const isWithinGeofence = (location, center, radius = GEOFENCE_RADIUS) => {
+  const distance = calculateDistance(
+    location.lat,
+    location.lng,
+    center.lat,
+    center.lng
+  );
+  return distance <= radius;
 };
 
 // Start journey tracking
-const startJourneyTracking = async (journeyId, driverId) => {
+const startJourneyTracking = async (journeyId, driverId, initialLocation) => {
   try {
-    await realtimeDb.ref(`active_journeys/${journeyId}`).set({
+    const journeyRef = ref(realtimeDb, `journeys/${journeyId}`);
+    await set(journeyRef, {
       driverId,
+      status: 'in-progress',
       startTime: Date.now(),
-      status: 'in_progress'
+      currentLocation: initialLocation,
+      geofences: [],
+      lastUpdate: Date.now()
     });
-
-    // Set up location tracking interval in the client side
-    return { success: true, journeyId };
+    return true;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error starting journey tracking: ${error.message}`);
+    console.error('Error starting journey tracking:', error);
+    throw new Error('Failed to start journey tracking');
   }
 };
 
 // End journey tracking
 const endJourneyTracking = async (journeyId) => {
   try {
-    const journeyRef = realtimeDb.ref(`active_journeys/${journeyId}`);
-    const snapshot = await journeyRef.once('value');
-    
-    if (!snapshot.exists()) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Journey not found');
+    const journeyRef = ref(realtimeDb, `journeys/${journeyId}`);
+    const snapshot = await get(journeyRef);
+    const journey = snapshot.val();
+
+    if (!journey) {
+      throw new Error('Journey not found');
     }
 
-    const journeyData = snapshot.val();
-    
-    // Store journey history
-    await realtimeDb.ref(`journey_history/${journeyId}`).set({
-      ...journeyData,
-      endTime: Date.now(),
-      status: 'completed'
+    await set(journeyRef, {
+      ...journey,
+      status: 'completed',
+      endTime: Date.now()
     });
 
-    // Remove from active journeys
-    await journeyRef.remove();
+    // Clean up location history after 24 hours
+    setTimeout(async () => {
+      const historyRef = ref(realtimeDb, `locationHistory/${journey.driverId}`);
+      await remove(historyRef);
+    }, 24 * 60 * 60 * 1000);
 
-    return { success: true };
+    return true;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error ending journey tracking: ${error.message}`);
+    console.error('Error ending journey tracking:', error);
+    throw new Error('Failed to end journey tracking');
   }
 };
 
-// Get active journey status
-const getJourneyStatus = async (journeyId) => {
+// Add geofence to journey
+const addJourneyGeofence = async (journeyId, center, radius = GEOFENCE_RADIUS) => {
   try {
-    const snapshot = await realtimeDb.ref(`active_journeys/${journeyId}`).once('value');
-    if (!snapshot.exists()) {
-      // Check history
-      const historySnapshot = await realtimeDb.ref(`journey_history/${journeyId}`).once('value');
-      if (!historySnapshot.exists()) {
-        throw createError(ErrorCodes.NOT_FOUND, 'Journey not found');
-      }
-      return historySnapshot.val();
+    const journeyRef = ref(realtimeDb, `journeys/${journeyId}`);
+    const snapshot = await get(journeyRef);
+    const journey = snapshot.val();
+
+    if (!journey) {
+      throw new Error('Journey not found');
     }
-    return snapshot.val();
+
+    const geofence = {
+      center,
+      radius,
+      id: Date.now().toString()
+    };
+
+    await set(journeyRef, {
+      ...journey,
+      geofences: [...(journey.geofences || []), geofence]
+    });
+
+    return geofence;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error getting journey status: ${error.message}`);
+    console.error('Error adding journey geofence:', error);
+    throw new Error('Failed to add journey geofence');
+  }
+};
+
+// Check geofence status
+const checkGeofenceStatus = async (journeyId, currentLocation) => {
+  try {
+    const journeyRef = ref(realtimeDb, `journeys/${journeyId}`);
+    const snapshot = await get(journeyRef);
+    const journey = snapshot.val();
+
+    if (!journey || !journey.geofences) {
+      return [];
+    }
+
+    return journey.geofences.map(geofence => ({
+      ...geofence,
+      isWithin: isWithinGeofence(currentLocation, geofence.center, geofence.radius)
+    }));
+  } catch (error) {
+    console.error('Error checking geofence status:', error);
+    throw new Error('Failed to check geofence status');
   }
 };
 
 module.exports = {
   updateDriverLocation,
   getDriverLocation,
-  calculateETAAndDistance,
+  getDriverLocationHistory,
+  calculateETA,
   startJourneyTracking,
   endJourneyTracking,
-  getJourneyStatus
+  addJourneyGeofence,
+  checkGeofenceStatus,
+  isWithinGeofence
 }; 

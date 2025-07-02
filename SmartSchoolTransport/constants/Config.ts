@@ -1,2 +1,2 @@
 // API Configuration
-export const API_URL = 'http://localhost:3000'; // Change this to your actual API URL in production 
+export const API_URL = 'http://172.20.10.3:5000'; // Updated to match backend IP and port 

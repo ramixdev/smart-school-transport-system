@@ -8,7 +8,9 @@ const createNotification = async (notificationData) => {
     const notificationRef = await notificationsCollection.add({
       ...notificationData,
       createdAt: new Date(),
-      status: 'unread'
+      status: 'unread',
+      type: notificationData.type, // 'journey', 'enrollment', 'system', etc.
+      priority: notificationData.priority || 'normal'
     });
     return { id: notificationRef.id, ...notificationData };
   } catch (error) {
@@ -29,16 +31,26 @@ const getNotificationById = async (notificationId) => {
   }
 };
 
-// Update notification status
-const updateNotificationStatus = async (notificationId, status) => {
+// Update notification
+const updateNotification = async (notificationId, notificationData) => {
   try {
     await notificationsCollection.doc(notificationId).update({
-      status,
+      ...notificationData,
       updatedAt: new Date()
     });
+    return { id: notificationId, ...notificationData };
+  } catch (error) {
+    throw new Error(`Error updating notification: ${error.message}`);
+  }
+};
+
+// Delete notification
+const deleteNotification = async (notificationId) => {
+  try {
+    await notificationsCollection.doc(notificationId).delete();
     return { success: true };
   } catch (error) {
-    throw new Error(`Error updating notification status: ${error.message}`);
+    throw new Error(`Error deleting notification: ${error.message}`);
   }
 };
 
@@ -56,74 +68,149 @@ const getNotificationsByUserId = async (userId) => {
     });
     return notifications;
   } catch (error) {
-    throw new Error(`Error getting notifications by user: ${error.message}`);
+    throw new Error(`Error getting notifications by user ID: ${error.message}`);
   }
 };
 
-// Get unread notifications by user ID
-const getUnreadNotificationsByUserId = async (userId) => {
+// Mark notification as read
+const markNotificationAsRead = async (notificationId) => {
   try {
-    const snapshot = await notificationsCollection
-      .where('userId', '==', userId)
-      .where('status', '==', 'unread')
-      .orderBy('createdAt', 'desc')
-      .get();
-    
-    const notifications = [];
-    snapshot.forEach(doc => {
-      notifications.push({ id: doc.id, ...doc.data() });
+    await notificationsCollection.doc(notificationId).update({
+      status: 'read',
+      readAt: new Date()
     });
-    return notifications;
-  } catch (error) {
-    throw new Error(`Error getting unread notifications: ${error.message}`);
-  }
-};
-
-// Mark all notifications as read
-const markAllNotificationsAsRead = async (userId) => {
-  try {
-    const snapshot = await notificationsCollection
-      .where('userId', '==', userId)
-      .where('status', '==', 'unread')
-      .get();
-    
-    const batch = db.batch();
-    snapshot.forEach(doc => {
-      batch.update(doc.ref, {
-        status: 'read',
-        updatedAt: new Date()
-      });
-    });
-    
-    await batch.commit();
     return { success: true };
   } catch (error) {
-    throw new Error(`Error marking notifications as read: ${error.message}`);
+    throw new Error(`Error marking notification as read: ${error.message}`);
   }
 };
 
-// Create emergency notification
-const createEmergencyNotification = async (emergencyData) => {
+// Create journey notification
+const createJourneyNotification = async (journeyData, type) => {
   try {
-    const notificationRef = await notificationsCollection.add({
-      ...emergencyData,
-      type: 'emergency',
-      priority: 'high',
-      createdAt: new Date(),
-      status: 'unread'
-    });
-    return { id: notificationRef.id, ...emergencyData };
+    let notificationData = {
+      type: 'journey',
+      journeyId: journeyData.id,
+      journeyType: journeyData.journeyType,
+      timestamp: new Date()
+    };
+
+    switch (type) {
+      case 'school_arrival':
+        notificationData = {
+          ...notificationData,
+          title: 'Child Arrived at School',
+          message: `Your child has arrived at ${journeyData.schoolName}`,
+          priority: 'high'
+        };
+        break;
+      case 'school_pickup':
+        notificationData = {
+          ...notificationData,
+          title: 'Child Picked Up from School',
+          message: `Your child has been picked up from ${journeyData.schoolName}`,
+          priority: 'high'
+        };
+        break;
+      case 'home_arrival':
+        notificationData = {
+          ...notificationData,
+          title: 'Child Arrived Home',
+          message: 'Your child has arrived home safely',
+          priority: 'high'
+        };
+        break;
+      case 'route_update':
+        notificationData = {
+          ...notificationData,
+          title: 'Route Update',
+          message: 'The journey route has been updated due to changes',
+          priority: 'normal'
+        };
+        break;
+      case 'early_arrival':
+        notificationData = {
+          ...notificationData,
+          title: 'Early Arrival Notice',
+          message: 'The driver will arrive 15 minutes earlier than usual',
+          priority: 'high'
+        };
+        break;
+    }
+
+    return await createNotification(notificationData);
   } catch (error) {
-    throw new Error(`Error creating emergency notification: ${error.message}`);
+    throw new Error(`Error creating journey notification: ${error.message}`);
+  }
+};
+
+// Create enrollment notification
+const createEnrollmentNotification = async (enrollmentData, type) => {
+  try {
+    let notificationData = {
+      type: 'enrollment',
+      enrollmentId: enrollmentData.id,
+      timestamp: new Date()
+    };
+
+    switch (type) {
+      case 'request':
+        notificationData = {
+          ...notificationData,
+          title: 'New Enrollment Request',
+          message: `New enrollment request for ${enrollmentData.childName}`,
+          priority: 'normal'
+        };
+        break;
+      case 'accepted':
+        notificationData = {
+          ...notificationData,
+          title: 'Enrollment Accepted',
+          message: `Enrollment request for ${enrollmentData.childName} has been accepted`,
+          priority: 'high'
+        };
+        break;
+      case 'rejected':
+        notificationData = {
+          ...notificationData,
+          title: 'Enrollment Rejected',
+          message: `Enrollment request for ${enrollmentData.childName} has been rejected`,
+          priority: 'normal'
+        };
+        break;
+    }
+
+    return await createNotification(notificationData);
+  } catch (error) {
+    throw new Error(`Error creating enrollment notification: ${error.message}`);
+  }
+};
+
+// Create system notification
+const createSystemNotification = async (systemData) => {
+  try {
+    const notificationData = {
+      type: 'system',
+      title: systemData.title,
+      message: systemData.message,
+      priority: systemData.priority || 'normal',
+      timestamp: new Date()
+    };
+
+    return await createNotification(notificationData);
+  } catch (error) {
+    throw new Error(`Error creating system notification: ${error.message}`);
   }
 };
 
 module.exports = {
   createNotification,
   getNotificationById,
-  updateNotificationStatus,
+  updateNotification,
+  deleteNotification,
   getNotificationsByUserId,
-  getUnreadNotificationsByUserId,
-  markAllNotificationsAsRead,
-  createEmergencyNotification
+  markNotificationAsRead,
+  createJourneyNotification,
+  createEnrollmentNotification,
+  createSystemNotification
 }; 

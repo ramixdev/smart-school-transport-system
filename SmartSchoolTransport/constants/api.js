@@ -1,11 +1,11 @@
 import { getAuth } from '../contexts/firebase';
+import { auth } from '../contexts/firebase';
 
 // API Base URL - change this based on environment
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = 'http://172.20.10.3:5000/api';
 
 // Helper method to get the current user's ID token
 const getAuthToken = async () => {
-  const auth = getAuth();
   if (auth.currentUser) {
     try {
       return await auth.currentUser.getIdToken();
@@ -287,6 +287,14 @@ export const driverAPI = {
     return apiRequest(`/driver/journey/${journeyId}/location`, {
       method: 'PUT',
       body: JSON.stringify({ location })
+    });
+  },
+  
+  // Update driver's schools
+  updateSchools: async (schoolIds) => {
+    return apiRequest('/driver/schools', {
+      method: 'PUT',
+      body: JSON.stringify({ schoolIds })
     });
   }
 };

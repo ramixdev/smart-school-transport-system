@@ -1,348 +1,379 @@
 const { db } = require('../config/firebase');
-const { createError, ErrorCodes } = require('../utils/errors');
-const { validateLocation } = require('../utils/validation');
+const { collection, addDoc, getDocs, query, where, updateDoc, doc, deleteDoc } = require('firebase/firestore');
 const axios = require('axios');
+const { GOOGLE_MAPS_API_KEY, getCachedRoute, cacheRoute } = require('../config/firebase');
 
-// Create a new journey
-const createJourney = async (driverId, type, date) => {
-  try {
-    // Get all enrolled children for the driver
-    const childrenSnapshot = await db.collection('children')
-      .where('driver', '==', driverId)
-      .get();
-
-    // Get absent children for the day
-    const absencesSnapshot = await db.collection('absences')
-      .where('date', '==', date.toISOString().split('T')[0])
-      .where('childId', 'in', childrenSnapshot.docs.map(doc => doc.id))
-      .get();
-
-    const absentChildIds = new Set(absencesSnapshot.docs.map(doc => doc.data().childId));
-
-    // Filter out absent children
-    const presentChildren = [];
-    for (const doc of childrenSnapshot.docs) {
-      if (!absentChildIds.has(doc.id)) {
-        presentChildren.push({ id: doc.id, ...doc.data() });
-      }
-    }
-
-    // Generate route based on type and present children
-    const route = await generateRoute(driverId, presentChildren, type);
-
-    const journeyRef = await db.collection('journeys').add({
-      driverId,
-      type,
-      date,
-      route,
-      status: 'scheduled',
-      children: presentChildren.map(child => ({
-        id: child.id,
-        name: child.name,
-        status: 'pending'
-      })),
-      startTime: null,
-      endTime: null,
-      createdAt: new Date()
-    });
-
-    return { id: journeyRef.id, route };
-  } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error creating journey: ${error.message}`);
-  }
+// Constants
+const OPTIMIZATION_ALGORITHMS = {
+  NEAREST_NEIGHBOR: 'nearest_neighbor',
+  GENETIC: 'genetic',
+  SIMULATED_ANNEALING: 'simulated_annealing'
 };
 
-// Helper: Call Google Maps Route Optimization API
-async function callGoogleRouteOptimizationAPI(startLocation, stops) {
-  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  if (!apiKey) throw new Error('Google Maps API key not set');
+// Helper function to calculate distance between two points
+const calculateDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
 
-  // Prepare waypoints (lat,lng)
-  const waypoints = stops.map(stop => `${stop.location.latitude},${stop.location.longitude}`);
-  const origin = `${startLocation.latitude},${startLocation.longitude}`;
-  const destination = waypoints[waypoints.length - 1];
-  const waypointsStr = waypoints.slice(0, -1).join('|');
-
-  // Use Directions API with optimize:true for waypoint optimization
-  const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&waypoints=optimize:true|${waypointsStr}&key=${apiKey}`;
-  const response = await axios.get(url);
-  if (response.data.status !== 'OK') throw new Error('Google Maps API error: ' + response.data.status);
-
-  // Get optimized order
-  const order = response.data.routes[0].waypoint_order;
-  const optimizedStops = order.map(i => stops[i]);
-  // Add the destination as the last stop
-  optimizedStops.push(stops[stops.length - 1]);
-  return optimizedStops;
-}
-
-// Generate optimized route
-const generateRoute = async (driverId, children, type) => {
-  try {
-    const driverDoc = await db.collection('drivers').doc(driverId).get();
-    const startLocation = driverDoc.data().vehicle.startLocation;
-
-    let stops = [];
-    if (type === 'morning') {
-      // Morning: Home -> Children's homes (parent location) -> Schools
-      const schools = new Map();
-      // Group children by school and fetch parent locations
-      const parentLocations = {};
-      for (const child of children) {
-        // Fetch parent location
-        if (!parentLocations[child.parentId]) {
-          const parentDoc = await db.collection('users').doc(child.parentId).get();
-          parentLocations[child.parentId] = parentDoc.data().location;
-        }
-        // Fetch school location
-        if (!schools.has(child.school)) {
-          const schoolDoc = await db.collection('schools').doc(child.school).get();
-          schools.set(child.school, {
-            location: schoolDoc.data().location,
-            children: []
-          });
-        }
-        schools.get(child.school).children.push(child);
-      }
-      // Add children's pickup locations (parent location)
-      stops = children.map(child => ({
-        type: 'pickup',
-        childId: child.id,
-        location: parentLocations[child.parentId],
-        name: child.name
-      }));
-      // Add school dropoff locations
-      for (const [schoolId, school] of schools) {
-        stops.push({
-          type: 'school_dropoff',
-          schoolId,
-          location: school.location,
-          children: school.children.map(c => c.id)
-        });
-      }
-    } else if (type === 'evening') {
-      // Evening: Schools -> Children's homes (parent location)
-      const schools = new Map();
-      const parentLocations = {};
-      for (const child of children) {
-        // Fetch parent location
-        if (!parentLocations[child.parentId]) {
-          const parentDoc = await db.collection('users').doc(child.parentId).get();
-          parentLocations[child.parentId] = parentDoc.data().location;
-        }
-        // Fetch school location
-        if (!schools.has(child.school)) {
-          const schoolDoc = await db.collection('schools').doc(child.school).get();
-          schools.set(child.school, {
-            location: schoolDoc.data().location,
-            children: []
-          });
-        }
-        schools.get(child.school).children.push(child);
-      }
-      // Add school pickup locations
-      for (const [schoolId, school] of schools) {
-        stops.push({
-          type: 'school_pickup',
-          schoolId,
-          location: school.location,
-          children: school.children.map(c => c.id)
-        });
-      }
-      // Add children's dropoff locations (parent location)
-      stops = stops.concat(children.map(child => ({
-        type: 'dropoff',
-        childId: child.id,
-        location: parentLocations[child.parentId],
-        name: child.name
-      })));
-    }
-    // Try Google Maps API for optimization
-    let optimizedStops;
-    try {
-      optimizedStops = await callGoogleRouteOptimizationAPI(startLocation, stops);
-    } catch (err) {
-      // Fallback to custom nearest neighbor
-      optimizedStops = optimizeRoute(startLocation, stops);
-    }
-    return {
-      startLocation,
-      stops: optimizedStops
-    };
-  } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error generating route: ${error.message}`);
-  }
-};
-
-// Simple nearest neighbor route optimization
-const optimizeRoute = (startLocation, stops) => {
-  const optimizedStops = [];
-  let currentLocation = startLocation;
-  const remainingStops = [...stops];
-
-  while (remainingStops.length > 0) {
-    let nearestIndex = 0;
-    let minDistance = calculateDistance(
-      currentLocation,
-      remainingStops[0].location
-    );
-
-    for (let i = 1; i < remainingStops.length; i++) {
-      const distance = calculateDistance(
-        currentLocation,
-        remainingStops[i].location
-      );
-      if (distance < minDistance) {
-        minDistance = distance;
-        nearestIndex = i;
-      }
-    }
-
-    const nextStop = remainingStops.splice(nearestIndex, 1)[0];
-    optimizedStops.push({
-      ...nextStop,
-      estimatedDistance: minDistance
-    });
-    currentLocation = nextStop.location;
-  }
-
-  return optimizedStops;
-};
-
-// Calculate distance between two points using Haversine formula
-const calculateDistance = (point1, point2) => {
-  const R = 6371; // Earth's radius in km
-  const lat1 = point1.latitude;
-  const lon1 = point1.longitude;
-  const lat2 = point2.latitude;
-  const lon2 = point2.longitude;
-
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+          Math.cos(φ1) * Math.cos(φ2) *
+          Math.sin(Δλ/2) * Math.sin(Δλ/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
   return R * c;
 };
 
-// Start journey
-const startJourney = async (journeyId) => {
+// Nearest Neighbor Algorithm
+const nearestNeighborAlgorithm = (stops, startPoint) => {
+  const route = [startPoint];
+  const unvisited = [...stops];
+
+  while (unvisited.length > 0) {
+    const current = route[route.length - 1];
+    let nearest = unvisited[0];
+    let minDistance = calculateDistance(
+      current.lat,
+      current.lng,
+      nearest.lat,
+      nearest.lng
+    );
+
+    for (let i = 1; i < unvisited.length; i++) {
+      const distance = calculateDistance(
+        current.lat,
+        current.lng,
+        unvisited[i].lat,
+        unvisited[i].lng
+      );
+      if (distance < minDistance) {
+        minDistance = distance;
+        nearest = unvisited[i];
+      }
+    }
+
+    route.push(nearest);
+    unvisited.splice(unvisited.indexOf(nearest), 1);
+  }
+
+  return route;
+};
+
+// Genetic Algorithm
+const geneticAlgorithm = (stops, startPoint, populationSize = 50, generations = 100) => {
+  // Initialize population
+  let population = Array(populationSize).fill().map(() => {
+    const route = [startPoint, ...stops];
+    for (let i = route.length - 1; i > 1; i--) {
+      const j = Math.floor(Math.random() * (i - 1)) + 1;
+      [route[i], route[j]] = [route[j], route[i]];
+    }
+    return route;
+  });
+
+  // Fitness function
+  const calculateFitness = (route) => {
+    let totalDistance = 0;
+    for (let i = 0; i < route.length - 1; i++) {
+      totalDistance += calculateDistance(
+        route[i].lat,
+        route[i].lng,
+        route[i + 1].lat,
+        route[i + 1].lng
+      );
+    }
+    return 1 / totalDistance;
+  };
+
+  // Selection
+  const selectParent = (population) => {
+    const fitnesses = population.map(calculateFitness);
+    const totalFitness = fitnesses.reduce((a, b) => a + b, 0);
+    let random = Math.random() * totalFitness;
+    for (let i = 0; i < population.length; i++) {
+      random -= fitnesses[i];
+      if (random <= 0) return population[i];
+    }
+    return population[population.length - 1];
+  };
+
+  // Crossover
+  const crossover = (parent1, parent2) => {
+    const child = [startPoint];
+    const remaining = parent1.slice(1);
+    const used = new Set([startPoint]);
+
+    while (child.length < parent1.length) {
+      const current = child[child.length - 1];
+      let next = null;
+      let minDistance = Infinity;
+
+      for (const stop of remaining) {
+        if (!used.has(stop)) {
+          const distance = calculateDistance(
+            current.lat,
+            current.lng,
+            stop.lat,
+            stop.lng
+          );
+          if (distance < minDistance) {
+            minDistance = distance;
+            next = stop;
+          }
+        }
+      }
+
+      if (next) {
+        child.push(next);
+        used.add(next);
+      }
+    }
+
+    return child;
+  };
+
+  // Mutation
+  const mutate = (route) => {
+    if (Math.random() < 0.1) {
+      const i = Math.floor(Math.random() * (route.length - 2)) + 1;
+      const j = Math.floor(Math.random() * (route.length - 2)) + 1;
+      [route[i], route[j]] = [route[j], route[i]];
+    }
+    return route;
+  };
+
+  // Evolution
+  for (let generation = 0; generation < generations; generation++) {
+    const newPopulation = [];
+    for (let i = 0; i < populationSize; i++) {
+      const parent1 = selectParent(population);
+      const parent2 = selectParent(population);
+      let child = crossover(parent1, parent2);
+      child = mutate(child);
+      newPopulation.push(child);
+    }
+    population = newPopulation;
+  }
+
+  // Return best route
+  return population.reduce((best, current) => {
+    return calculateFitness(current) > calculateFitness(best) ? current : best;
+  });
+};
+
+// Simulated Annealing Algorithm
+const simulatedAnnealingAlgorithm = (stops, startPoint, initialTemp = 100, coolingRate = 0.95) => {
+  let currentRoute = [startPoint, ...stops];
+  let bestRoute = [...currentRoute];
+  let currentDistance = calculateTotalDistance(currentRoute);
+  let bestDistance = currentDistance;
+  let temperature = initialTemp;
+
+  while (temperature > 1) {
+    // Generate new route by swapping two random stops
+    const newRoute = [...currentRoute];
+    const i = Math.floor(Math.random() * (newRoute.length - 2)) + 1;
+    const j = Math.floor(Math.random() * (newRoute.length - 2)) + 1;
+    [newRoute[i], newRoute[j]] = [newRoute[j], newRoute[i]];
+
+    const newDistance = calculateTotalDistance(newRoute);
+    const delta = newDistance - currentDistance;
+
+    // Accept new route if it's better or based on probability
+    if (delta < 0 || Math.random() < Math.exp(-delta / temperature)) {
+      currentRoute = newRoute;
+      currentDistance = newDistance;
+
+      if (currentDistance < bestDistance) {
+        bestRoute = [...currentRoute];
+        bestDistance = currentDistance;
+      }
+    }
+
+    temperature *= coolingRate;
+  }
+
+  return bestRoute;
+};
+
+// Calculate total distance of a route
+const calculateTotalDistance = (route) => {
+  let totalDistance = 0;
+  for (let i = 0; i < route.length - 1; i++) {
+    totalDistance += calculateDistance(
+      route[i].lat,
+      route[i].lng,
+      route[i + 1].lat,
+      route[i + 1].lng
+    );
+  }
+  return totalDistance;
+};
+
+// Optimize route using Google Maps API
+const optimizeRouteWithGoogleMaps = async (stops, startPoint) => {
   try {
-    const journeyDoc = await db.collection('journeys').doc(journeyId).get();
-    if (!journeyDoc.exists) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Journey not found');
+    const cacheKey = JSON.stringify([startPoint, ...stops]);
+    const cached = getCachedRoute(cacheKey);
+    if (cached) {
+      return cached;
     }
 
-    if (journeyDoc.data().status !== 'scheduled') {
-      throw createError(ErrorCodes.INVALID_STATUS, 'Journey is not in scheduled status');
+    const waypoints = stops.map(stop => `${stop.lat},${stop.lng}`).join('|');
+    const origin = `${startPoint.lat},${startPoint.lng}`;
+    const destination = origin; // Return to start point
+
+    const response = await axios.get(
+      `https://maps.googleapis.com/maps/api/directions/json?origin=${origin}&destination=${destination}&waypoints=optimize:true|${waypoints}&key=${GOOGLE_MAPS_API_KEY}`
+    );
+
+    if (response.data.status !== 'OK') {
+      throw new Error('Failed to optimize route');
     }
 
-    await journeyDoc.ref.update({
-      status: 'in_progress',
-      startTime: new Date()
-    });
+    const optimizedRoute = response.data.routes[0];
+    const result = {
+      route: optimizedRoute.legs.map(leg => ({
+        start: leg.start_location,
+        end: leg.end_location,
+        distance: leg.distance,
+        duration: leg.duration,
+        durationInTraffic: leg.duration_in_traffic
+      })),
+      totalDistance: optimizedRoute.legs.reduce((sum, leg) => sum + leg.distance.value, 0),
+      totalDuration: optimizedRoute.legs.reduce((sum, leg) => sum + leg.duration.value, 0),
+      waypointOrder: optimizedRoute.waypoint_order
+    };
 
-    return { success: true };
+    cacheRoute(cacheKey, result);
+    return result;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error starting journey: ${error.message}`);
+    console.error('Error optimizing route with Google Maps:', error);
+    throw new Error('Failed to optimize route with Google Maps');
   }
 };
 
-// End journey
-const endJourney = async (journeyId) => {
+// Create journey
+const createJourney = async (journeyData) => {
   try {
-    const journeyDoc = await db.collection('journeys').doc(journeyId).get();
-    if (!journeyDoc.exists) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Journey not found');
-    }
+    const journeyRef = collection(db, 'journeys');
+    const journey = {
+      ...journeyData,
+      status: 'pending',
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
 
-    if (journeyDoc.data().status !== 'in_progress') {
-      throw createError(ErrorCodes.INVALID_STATUS, 'Journey is not in progress');
-    }
-
-    await journeyDoc.ref.update({
-      status: 'completed',
-      endTime: new Date()
-    });
-
-    return { success: true };
+    const docRef = await addDoc(journeyRef, journey);
+    return { id: docRef.id, ...journey };
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error ending journey: ${error.message}`);
+    console.error('Error creating journey:', error);
+    throw new Error('Failed to create journey');
   }
 };
 
-// Update child status in journey
-const updateChildStatus = async (journeyId, childId, status, location) => {
+// Optimize journey route
+const optimizeJourneyRoute = async (journeyId, algorithm = OPTIMIZATION_ALGORITHMS.GENETIC) => {
   try {
-    if (!validateLocation(location)) {
-      throw createError(ErrorCodes.VALIDATION_ERROR, 'Invalid location data');
-    }
-
-    const journeyDoc = await db.collection('journeys').doc(journeyId).get();
-    if (!journeyDoc.exists) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Journey not found');
-    }
-
+    const journeyRef = doc(db, 'journeys', journeyId);
+    const journeyDoc = await getDocs(journeyRef);
     const journey = journeyDoc.data();
-    const childIndex = journey.children.findIndex(c => c.id === childId);
-    if (childIndex === -1) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Child not found in journey');
+
+    if (!journey) {
+      throw new Error('Journey not found');
     }
 
-    journey.children[childIndex].status = status;
-    journey.children[childIndex].statusUpdatedAt = new Date();
-    journey.children[childIndex].location = location;
+    const { stops, startPoint } = journey;
+    let optimizedRoute;
 
-    await journeyDoc.ref.update({
-      children: journey.children
+    try {
+      // Try Google Maps API first
+      optimizedRoute = await optimizeRouteWithGoogleMaps(stops, startPoint);
+    } catch (error) {
+      console.warn('Falling back to local optimization algorithm');
+      // Fallback to local algorithm
+      switch (algorithm) {
+        case OPTIMIZATION_ALGORITHMS.NEAREST_NEIGHBOR:
+          optimizedRoute = nearestNeighborAlgorithm(stops, startPoint);
+          break;
+        case OPTIMIZATION_ALGORITHMS.GENETIC:
+          optimizedRoute = geneticAlgorithm(stops, startPoint);
+          break;
+        case OPTIMIZATION_ALGORITHMS.SIMULATED_ANNEALING:
+          optimizedRoute = simulatedAnnealingAlgorithm(stops, startPoint);
+          break;
+        default:
+          throw new Error('Invalid optimization algorithm');
+      }
+    }
+
+    await updateDoc(journeyRef, {
+      optimizedRoute,
+      updatedAt: Date.now()
     });
 
-    return { success: true };
+    return optimizedRoute;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error updating child status: ${error.message}`);
+    console.error('Error optimizing journey route:', error);
+    throw new Error('Failed to optimize journey route');
   }
 };
 
-// Get active journey for driver
-const getActiveJourney = async (driverId) => {
+// Update journey status
+const updateJourneyStatus = async (journeyId, status) => {
   try {
-    const snapshot = await db.collection('journeys')
-      .where('driverId', '==', driverId)
-      .where('status', '==', 'in_progress')
-      .get();
-
-    if (snapshot.empty) {
-      return null;
-    }
-
-    const doc = snapshot.docs[0];
-    return { id: doc.id, ...doc.data() };
+    const journeyRef = doc(db, 'journeys', journeyId);
+    await updateDoc(journeyRef, {
+      status,
+      updatedAt: Date.now()
+    });
+    return true;
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error getting active journey: ${error.message}`);
+    console.error('Error updating journey status:', error);
+    throw new Error('Failed to update journey status');
   }
 };
 
-// Get journey by ID
-const getJourneyById = async (journeyId) => {
+// Get journey details
+const getJourneyDetails = async (journeyId) => {
   try {
-    const journeyDoc = await db.collection('journeys').doc(journeyId).get();
-    if (!journeyDoc.exists) {
-      throw createError(ErrorCodes.NOT_FOUND, 'Journey not found');
-    }
-
-    return { id: journeyDoc.id, ...journeyDoc.data() };
+    const journeyRef = doc(db, 'journeys', journeyId);
+    const journeyDoc = await getDocs(journeyRef);
+    return journeyDoc.data();
   } catch (error) {
-    throw createError(ErrorCodes.DATABASE_ERROR, `Error getting journey: ${error.message}`);
+    console.error('Error getting journey details:', error);
+    throw new Error('Failed to get journey details');
+  }
+};
+
+// Get driver's active journeys
+const getDriverActiveJourneys = async (driverId) => {
+  try {
+    const journeysRef = collection(db, 'journeys');
+    const q = query(
+      journeysRef,
+      where('driverId', '==', driverId),
+      where('status', 'in', ['pending', 'in-progress'])
+    );
+
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+  } catch (error) {
+    console.error('Error getting driver active journeys:', error);
+    throw new Error('Failed to get driver active journeys');
   }
 };
 
 module.exports = {
+  OPTIMIZATION_ALGORITHMS,
   createJourney,
-  startJourney,
-  endJourney,
-  updateChildStatus,
-  getActiveJourney,
-  getJourneyById
+  optimizeJourneyRoute,
+  updateJourneyStatus,
+  getJourneyDetails,
+  getDriverActiveJourneys
 }; 

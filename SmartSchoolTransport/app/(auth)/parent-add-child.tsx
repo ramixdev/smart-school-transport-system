@@ -1,10 +1,12 @@
 // app/(auth)/parent-add-child.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Modal, Platform, Dimensions, KeyboardAvoidingView } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Modal, Platform, Dimensions, KeyboardAvoidingView, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { Colors } from '../../constants/Colors';
 import { FontAwesome, MaterialIcons } from '@expo/vector-icons';
 import { getSchools } from '../../services/api';
+import { parentAPI } from '../../constants/api';
+import { auth } from '../../contexts/firebase';
 
 export default function ParentAddChildScreen() {
   const [childName, setChildName] = useState('');
@@ -37,35 +39,65 @@ export default function ParentAddChildScreen() {
     fetchSchools();
   }, []);
   
-  const handleNext = () => {
+  const handleNext = async () => {
     // Validate inputs
     if (!childName.trim()) {
-      alert('Please enter your child\'s name');
+      Alert.alert('Error', 'Please enter your child\'s name');
       return;
     }
     if (!grade.trim()) {
-      alert('Please enter your child\'s grade');
+      Alert.alert('Error', 'Please enter your child\'s grade');
       return;
     }
     if (!dateOfBirth) {
-      alert('Please select your child\'s date of birth');
+      Alert.alert('Error', 'Please select your child\'s date of birth');
       return;
     }
     if (!selectedSchool) {
-      alert('Please select your child\'s school');
+      Alert.alert('Error', 'Please select your child\'s school');
       return;
     }
-    // Move to the driver selection screen, passing schoolId and child details
-    router.push({
-      pathname: '/(auth)/parent-select-driver',
-      params: {
-        schoolId: schools.find(s => s.name === selectedSchool)?.id || selectedSchool,
-        childName,
-        grade,
-        dateOfBirth,
-        schoolName: selectedSchool
+
+    try {
+      // Create child in backend
+      const schoolId = schools.find(s => s.name === selectedSchool)?.id;
+      if (!schoolId) {
+        throw new Error('Invalid school selected');
       }
-    });
+
+      const childData = {
+        name: childName,
+        dateOfBirth: dateOfBirth.split('/').reverse().join('-'),
+        grade,
+        schoolId,
+        parentId: auth.currentUser?.uid // This will be set by the backend from the auth token
+      };
+
+      const response = await parentAPI.addChild(childData);
+      
+      if (!response.child || !response.child.id) {
+        throw new Error('Failed to create child record');
+      }
+
+      // Move to the driver selection screen with the created child's ID
+      router.push({
+        pathname: '/(auth)/parent-select-driver',
+        params: {
+          schoolId,
+          childId: response.child.id,
+          childName,
+          grade,
+          dateOfBirth,
+          schoolName: selectedSchool
+        }
+      });
+    } catch (error: any) {
+      Alert.alert(
+        'Error',
+        error?.message || 'Failed to add child. Please try again.',
+        [{ text: 'OK' }]
+      );
+    }
   };
   
   const confirmDate = () => {

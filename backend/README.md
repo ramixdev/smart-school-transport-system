@@ -1,155 +1,174 @@
-# Smart School Transport - Backend API
+# School Transport Backend
 
-This is the backend server for the Smart School Transport application. It provides APIs for parents, drivers, and admins to manage school transportation services.
+This is the backend service for the School Transport application, handling real-time location tracking, route optimization, and notifications.
 
-## Technologies Used
+## Prerequisites
 
-- Node.js and Express
-- Firebase Authentication
-- Firebase Firestore
-- Firebase Storage
+- Node.js (v14 or higher)
+- Firebase project with Firestore and Realtime Database
+- Google Maps API key
+- Firebase Cloud Messaging (FCM) setup
 
-## Getting Started
+## Environment Variables
 
-### Prerequisites
+Create a `.env` file in the root directory with the following variables:
 
-- Node.js (v14+)
-- npm or yarn
-- Firebase project with Authentication, Firestore, and Storage enabled
+```env
+# Firebase Configuration
+FIREBASE_API_KEY=your_api_key
+FIREBASE_AUTH_DOMAIN=your_auth_domain
+FIREBASE_PROJECT_ID=your_project_id
+FIREBASE_STORAGE_BUCKET=your_storage_bucket
+FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+FIREBASE_APP_ID=your_app_id
+FIREBASE_DATABASE_URL=your_database_url
+FIREBASE_PRIVATE_KEY=your_private_key
+FIREBASE_CLIENT_EMAIL=your_client_email
 
-### Installation
+# Google Maps API
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 
-1. Clone the repository
-2. Navigate to the backend folder
-```bash
-cd backend
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# JWT Configuration
+JWT_SECRET=your_jwt_secret
+JWT_EXPIRES_IN=24h
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=900000
+RATE_LIMIT_MAX_REQUESTS=100
+
+# Logging
+LOG_LEVEL=info
+LOG_FILE_PATH=logs/app.log
+
+# Cache Configuration
+CACHE_TTL=300000
+MAX_CACHE_SIZE=1000
+
+# Notification Configuration
+FCM_SERVER_KEY=your_fcm_server_key
+NOTIFICATION_BATCH_SIZE=500
 ```
 
-3. Install dependencies
+## Installation
+
+1. Install dependencies:
 ```bash
 npm install
 ```
 
-4. Create a `.env` file in the backend folder with the following variables:
-```
-PORT=5000
-NODE_ENV=development
+2. Set up Firebase:
+   - Create a new Firebase project
+   - Enable Firestore and Realtime Database
+   - Download service account key and save as `config/serviceAccountKey.json`
+   - Enable Firebase Cloud Messaging
 
-# Firebase Configuration
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_PRIVATE_KEY=your-private-key
-FIREBASE_CLIENT_EMAIL=your-client-email
-FIREBASE_STORAGE_BUCKET=your-storage-bucket
-FIREBASE_DATABASE_URL=your-database-url
-```
+3. Set up Google Maps API:
+   - Create a new project in Google Cloud Console
+   - Enable Maps JavaScript API, Directions API, and Distance Matrix API
+   - Create API key with appropriate restrictions
 
-5. Start the server
+4. Start the server:
 ```bash
-npm run dev
+npm start
 ```
 
-## API Documentation
+## Features
 
-### Authentication
+### Location Tracking
+- Real-time location updates using Firebase Realtime Database
+- Location history with automatic cleanup
+- Geofencing support for stops and schools
 
-- `POST /api/auth/register` - Register a new user (parent, driver)
-- `GET /api/auth/profile` - Get current user profile
-- `PUT /api/auth/profile` - Update user profile
-- `POST /api/auth/change-password` - Change user password
-- `DELETE /api/auth/delete-account` - Delete user account
+### Route Optimization
+- Multiple optimization algorithms:
+  - Nearest Neighbor
+  - Genetic Algorithm
+  - Simulated Annealing
+- Google Maps API integration with fallback
+- Route caching for performance
+- Traffic consideration
 
-### Parent Routes
+### Notifications
+- Firebase Cloud Messaging (FCM) integration
+- Token management and refresh
+- Batch notifications
+- Support for different notification types:
+  - Journey updates
+  - Absence notifications
+  - System notifications
 
-- `GET /api/parent/profile` - Get parent profile with children
-- `POST /api/parent/child` - Add a new child
-- `PUT /api/parent/child/:childId` - Update child details
-- `POST /api/parent/child/:childId/image` - Upload child profile image
-- `DELETE /api/parent/child/:childId` - Delete a child
-- `POST /api/parent/child/:childId/attendance` - Mark child as absent
-- `POST /api/parent/enrollment` - Request driver enrollment
-- `GET /api/parent/enrollments` - Get enrollment requests
+### Journey Management
+- Journey creation and tracking
+- Status updates
+- Route optimization
+- Stop management
+- ETA calculation
 
-### Driver Routes
+## API Endpoints
 
-- `GET /api/driver/profile` - Get driver profile
-- `POST /api/driver/profile` - Create driver profile
-- `PUT /api/driver/profile` - Update driver profile
-- `POST /api/driver/profile/image` - Upload driver profile image
-- `POST /api/driver/vehicle` - Update vehicle details
-- `POST /api/driver/vehicle/images` - Upload vehicle images
-- `POST /api/driver/school` - Add school to driver
-- `DELETE /api/driver/school/:schoolId` - Remove school from driver
-- `GET /api/driver/enrollments` - Get pending enrollments
-- `PUT /api/driver/enrollment/:enrollmentId` - Respond to enrollment request
-- `GET /api/driver/children` - Get enrolled children
-- `DELETE /api/driver/child/:childId` - Remove child from driver
-- `POST /api/driver/journey` - Create journey
-- `GET /api/driver/journeys` - Get journeys by date
-- `POST /api/driver/journey/:journeyId/start` - Start journey
-- `POST /api/driver/journey/:journeyId/end` - End journey
-- `PUT /api/driver/journey/:journeyId/location` - Update journey location
-- `POST /api/driver/journey/:journeyId/stop` - Add stop to journey
+### Location
+- `POST /api/location/update` - Update driver location
+- `GET /api/location/:driverId` - Get driver's current location
+- `GET /api/location/:driverId/history` - Get location history
 
-### Admin Routes
+### Journey
+- `POST /api/journey` - Create new journey
+- `GET /api/journey/:id` - Get journey details
+- `PUT /api/journey/:id/status` - Update journey status
+- `POST /api/journey/:id/optimize` - Optimize journey route
 
-- `GET /api/admin/dashboard` - Get dashboard statistics
-- `GET /api/admin/users` - Get all users
-- `GET /api/admin/users/:userType` - Get users by type
-- `DELETE /api/admin/user/:userId` - Delete user
-- `GET /api/admin/drivers` - Get all drivers with details
-- `DELETE /api/admin/driver/:driverId` - Delete driver
-- `GET /api/admin/students` - Get all students
-- `GET /api/admin/students/school/:schoolId` - Get students by school
-- `DELETE /api/admin/student/:childId` - Delete student
-- `GET /api/admin/schools` - Get all schools
-- `POST /api/admin/school` - Add school
-- `PUT /api/admin/school/:schoolId` - Update school
-- `DELETE /api/admin/school/:schoolId` - Delete school
-
-### School Routes (Available to all authenticated users)
-
-- `GET /api/schools` - Get all schools
-- `GET /api/schools/:schoolId` - Get school by ID
-- `GET /api/schools/:schoolId/drivers` - Get drivers by school
-
-## Project Structure
-
-- `server.js` - Entry point for the application
-- `config/` - Configuration files
-- `controllers/` - API controllers
-- `middleware/` - Custom middleware functions
-- `models/` - Data models
-- `routes/` - API routes
-- `utils/` - Utility functions
-
-## Authentication
-
-The API uses Firebase Authentication. All protected routes require an Authorization header with a valid Firebase ID token:
-
-```
-Authorization: Bearer <firebase-id-token>
-```
+### Notifications
+- `POST /api/notifications` - Create notification
+- `GET /api/notifications` - Get user notifications
+- `PUT /api/notifications/:id/read` - Mark notification as read
+- `DELETE /api/notifications/:id` - Delete notification
 
 ## Error Handling
 
-All API responses follow a standard format:
+The application uses a centralized error handling system with custom error codes:
 
-Success:
-```json
-{
-  "message": "Success message",
-  "data": { ... }
-}
-```
+- `VALIDATION_ERROR` - Invalid input data
+- `NOT_FOUND` - Resource not found
+- `UNAUTHORIZED` - Authentication required
+- `FORBIDDEN` - Insufficient permissions
+- `DATABASE_ERROR` - Database operation failed
+- `EXTERNAL_API_ERROR` - External API call failed
 
-Error:
-```json
-{
-  "message": "Error message",
-  "error": "Detailed error message"
-}
-```
+## Logging
+
+Logs are written to both console and file with different levels:
+- `error` - Application errors
+- `warn` - Warning messages
+- `info` - General information
+- `debug` - Debug information
+
+## Security
+
+- JWT authentication
+- Rate limiting
+- Input validation
+- CORS configuration
+- Helmet security headers
+
+## Performance
+
+- Route caching
+- Batch notifications
+- Location history cleanup
+- Optimized database queries
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-[MIT](LICENSE) 
+This project is licensed under the MIT License. 
