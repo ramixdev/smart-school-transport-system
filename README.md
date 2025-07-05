@@ -12,7 +12,6 @@ A full-stack mobile and web platform for safe, efficient, and transparent school
 - [Project Structure](#project-structure)
 - [API Overview](#api-overview)
 - [Testing](#testing)
-- [Screenshots](#screenshots)
 - [License](#license)
 
 ---
